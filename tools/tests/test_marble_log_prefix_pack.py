@@ -1,4 +1,4 @@
-import importlib.util,tempfile,unittest,subprocess
+import importlib.util,tempfile,unittest,subprocess,os,shutil
 from pathlib import Path
 spec=importlib.util.spec_from_file_location('log_prefix_pack',Path(__file__).parents[1]/'marble-log-prefix-pack.py');m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 class Pack(unittest.TestCase):
@@ -20,7 +20,9 @@ assert(!strcmp(output,"marble-a: n=1234567890123 hex=abcdef1234567890 hello %\\n
 }'''
   with tempfile.TemporaryDirectory() as tmp:
    p=Path(tmp);(p/'formatter.c').write_text(program)
-   llvm=root.parent/'toolchains/llvm-mingw-20261020-ucrt-x86_64/bin/clang.exe'
+   local=root.parent/'toolchains/llvm-mingw-20261020-ucrt-x86_64/bin/clang.exe'
+   llvm=os.environ.get('CC') or (str(local) if local.is_file() else shutil.which('clang') or shutil.which('gcc'))
+   if not llvm:self.skipTest('host compiler unavailable')
    subprocess.run([str(llvm),str(p/'formatter.c'),'-O2','-o',str(p/'formatter.exe')],check=True,capture_output=True)
    subprocess.run([str(p/'formatter.exe')],check=True,capture_output=True)
  def test_only_constant_print_prefixes_change_and_round_trip(self):

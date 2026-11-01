@@ -1,11 +1,12 @@
-import importlib.util,json,subprocess,tempfile,unittest
+import importlib.util,json,os,shutil,subprocess,tempfile,unittest
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
 s=importlib.util.spec_from_file_location('format_pack',ROOT/'tools/marble-format-pack.py');m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
 class Formats(unittest.TestCase):
  @classmethod
  def setUpClass(cls):
-  cls.temp=tempfile.TemporaryDirectory();cls.base=Path(cls.temp.name);cls.codec=cls.base/'lz4.exe';cls.clang=ROOT.parent/'toolchains/llvm-mingw-20261020-ucrt-x86_64/bin/clang.exe'
+  cls.temp=tempfile.TemporaryDirectory();cls.base=Path(cls.temp.name);cls.codec=cls.base/'lz4.exe';local=ROOT.parent/'toolchains/llvm-mingw-20261020-ucrt-x86_64/bin/clang.exe';cls.clang=os.environ.get('CC') or (str(local) if local.is_file() else shutil.which('clang') or shutil.which('gcc'))
+  if not cls.clang:raise unittest.SkipTest('host compiler unavailable')
   subprocess.run([str(cls.clang),'-O2',str(ROOT/'tools/marble-lz4.c'),str(ROOT/'xnuloader/vendor/lz4/lz4.c'),str(ROOT/'xnuloader/vendor/lz4/lz4hc.c'),'-o',str(cls.codec)],check=True,capture_output=True)
  @classmethod
  def tearDownClass(cls):cls.temp.cleanup()
