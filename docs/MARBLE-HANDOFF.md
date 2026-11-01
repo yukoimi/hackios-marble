@@ -86,3 +86,11 @@ profile、报告器通过 `audio-display-dma-only` 显式绑定。
 `python tools/marble-host-tests.py` 运行公开 Python 回归及可独立运行的 C 模型。
 依赖本地 ROM/内核/镜像的用例逐项声明并以 skip 显示；不会为了 CI 上传闭源
 输入或将它们误报为通过。恢复大历史归档需要原开发材料；公开仓库不包含这些归档。
+
+## 开发机退役交接
+
+原开发工作区在源码发布核对后清理，旧的本地历史归档与编译虚拟机不再保留。
+公开仓库保留必要源码、输入清单与 v259 参考；上述私有输入和 bootstrap 缺口仍需后续开发者自行补齐。
+原始 Mu 镜像的只读拆解工具为 `tools/marble-inspect-original-image.py`，运行
+`python tools/marble-inspect-original-image.py Mu-marble.img OUTPUT_DIRECTORY`；
+该工具仅向输出目录写入拆解结果，不改动原镜像，也不连接手机。

@@ -166,3 +166,6 @@ id_ed25519
 !/tools/tests/fixtures/*.log
 
 !/xnuloader/loader_result.h
+
+# APFS inspection launch commands are text source, not a filesystem image.
+!/userland/rc.jobs.apfs
