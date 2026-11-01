@@ -1,0 +1,235 @@
+--- a/AdrenoHfiVotes.h
++++ b/AdrenoHfiVotes.h
+@@ -17,6 +17,10 @@
+ AdrenoHfiStartupStatus AdrenoHfiArcVotes(const uint32_t *levels,size_t level_count,
+     const uint8_t *primary,size_t primary_bytes,const uint8_t *secondary,size_t secondary_bytes,
+     uint32_t *votes,size_t capacity);
++/* Explicit target policy. MarbleGen7 rounds the dependency against the
++ * selected primary level, as Xiaomi Gen7 does. Original API stays Sheng. */
++AdrenoHfiStartupStatus AdrenoHfiArcVotesProfile(const uint32_t *,size_t,
++    const uint8_t *,size_t,const uint8_t *,size_t,uint32_t *,size_t,AdrenoHfiProfile);
+ typedef struct {
+     uint32_t address,unit;
+     uint16_t width,buswidth;
+@@ -36,6 +40,12 @@
+  * Does not validate actual rail/BCM ownership, limits, speed bin or power. */
+ AdrenoHfiStartupStatus AdrenoHfiBuildBandwidth(const uint32_t *kbps,size_t level_count,
+     const AdrenoHfiBcm *bcms,size_t bcm_count,uint32_t cn0_address,AdrenoHfiStartupConfig *);
++/* MarbleGen7: caller supplies exact SH0/MC0/ACV catalog order and CN0 aux.
++ * Peak-only ab=0 arithmetic; fixed ACV is enabled with 0x8. CNOC uses the
++ * platform's two levels {0,100} KB/s. Reject unsupported catalog policies;
++ * do not infer clocks, rails, ownership, OPP filtering or readiness. */
++AdrenoHfiStartupStatus AdrenoHfiBuildBandwidthProfile(const uint32_t *,size_t,
++    const AdrenoHfiBcm *,size_t,const AdrenoHfiBcm *,AdrenoHfiStartupConfig *,AdrenoHfiProfile);
+ #ifdef __cplusplus
+ }
+ #endif
+--- a/AdrenoHfiVotes.c
++++ b/AdrenoHfiVotes.c
+@@ -14,11 +14,12 @@
+     }
+     return 1;
+ }
+-AdrenoHfiStartupStatus AdrenoHfiArcVotes(const uint32_t *levels,size_t count,
++AdrenoHfiStartupStatus AdrenoHfiArcVotesProfile(const uint32_t *levels,size_t count,
+     const uint8_t *primary,size_t primary_bytes,const uint8_t *secondary,size_t secondary_bytes,
+-    uint32_t *votes,size_t capacity)
++    uint32_t *votes,size_t capacity,AdrenoHfiProfile profile)
+ {
+-    if(!levels || !votes || !count || count>16 || capacity<count || levels[0] ||
++    if((profile!=AdrenoHfiProfileSheng && profile!=AdrenoHfiProfileMarbleGen7) ||
++        !levels || !votes || !count || count>16 || capacity<count || levels[0] ||
+         !rail(primary,primary_bytes) || !rail(secondary,secondary_bytes))return AdrenoHfiStartupInvalid;
+     uint32_t result[16];
+     for(size_t i=0;i<count;++i) {
+@@ -26,9 +27,10 @@
+         size_t p=0,s=0;
+         while(p<primary_bytes/2 && le16(primary+2*p)<levels[i])++p;
+         if(p==primary_bytes/2)return AdrenoHfiStartupInvalid;
++        uint16_t dependency=profile==AdrenoHfiProfileMarbleGen7?le16(primary+2*p):(uint16_t)levels[i];
+         for(size_t j=0;j<secondary_bytes/2;++j) {
+             uint16_t value=le16(secondary+2*j);
+-            if(value>=levels[i]) {s=j;break;}
++            if(value>=dependency) {s=j;break;}
+             if(value)s=j;
+         }
+         result[i]=(uint32_t)le16(primary+2*p)<<16 | (uint32_t)s<<8 | (uint32_t)p;
+@@ -36,6 +38,11 @@
+     for(size_t i=0;i<count;++i)votes[i]=result[i];
+     return AdrenoHfiStartupSuccess;
+ }
++AdrenoHfiStartupStatus AdrenoHfiArcVotes(const uint32_t *levels,size_t count,
++    const uint8_t *primary,size_t primary_bytes,const uint8_t *secondary,size_t secondary_bytes,
++    uint32_t *votes,size_t capacity)
++{return AdrenoHfiArcVotesProfile(levels,count,primary,primary_bytes,secondary,secondary_bytes,
++    votes,capacity,AdrenoHfiProfileSheng);}
+ AdrenoHfiStartupStatus AdrenoHfiBcmAux(AdrenoHfiBcm *b,const uint8_t *p,size_t bytes)
+ {
+     if(!b || !p || bytes!=8 || p[7])return AdrenoHfiStartupInvalid;
+@@ -87,3 +94,50 @@
+     }
+     return AdrenoHfiStartupSuccess;
+ }
++static uint32_t peak_vote(uint32_t kbps,const AdrenoHfiBcm *b)
++{
++    if(!kbps)return 0;
++    if(b->fixed)return 8;
++    uint64_t vote=(uint64_t)kbps*b->width/b->buswidth;
++    vote=vote*1000/b->unit;
++    return vote>0x3fff?0x3fff:vote?(uint32_t)vote:1;
++}
++AdrenoHfiStartupStatus AdrenoHfiBuildBandwidthProfile(const uint32_t *kbps,size_t count,
++    const AdrenoHfiBcm *bcms,size_t n,const AdrenoHfiBcm *cnoc,AdrenoHfiStartupConfig *c,
++    AdrenoHfiProfile profile)
++{
++    if(!cnoc)return AdrenoHfiStartupInvalid;
++    if(profile==AdrenoHfiProfileSheng)
++        return AdrenoHfiBuildBandwidth(kbps,count,bcms,n,cnoc->address,c);
++    if(profile!=AdrenoHfiProfileMarbleGen7 || !c || !kbps || !bcms ||
++        count<2 || count>16 || kbps[0] || n!=3 || !address(cnoc->address) ||
++        cnoc->fixed || cnoc->buswidth!=4 || !cnoc->unit || !cnoc->width ||
++        cnoc->perfmode || cnoc->perfmode_kbps)return AdrenoHfiStartupInvalid;
++    for(size_t i=1;i<count;i++)if(kbps[i]<=kbps[i-1])return AdrenoHfiStartupInvalid;
++    /* This API represents this target's catalog, not arbitrary BCM policies. */
++    if(bcms[0].buswidth!=16 || bcms[1].buswidth!=4 || bcms[0].fixed ||
++        bcms[1].fixed || bcms[2].fixed!=1)return AdrenoHfiStartupInvalid;
++    for(size_t j=0;j<n;j++) {
++        const AdrenoHfiBcm *b=bcms+j;
++        if(!address(b->address) || b->address==cnoc->address || b->perfmode || b->perfmode_kbps ||
++            (!b->fixed && (!b->unit || !b->width)))return AdrenoHfiStartupInvalid;
++        for(size_t k=0;k<j;k++)if(b->address==bcms[k].address)return AdrenoHfiStartupInvalid;
++    }
++    /* All possible refusals precede the first output write. Peak arithmetic
++     * cannot overflow uint64 for the uint32 bandwidth/uint16 width bounds. */
++    c->bandwidth_count=(unsigned)count;c->cnoc_count=1;c->ddr_count=3;
++    c->cnoc_wait_mask=1;c->ddr_wait_mask=0;
++    for(unsigned j=0;j<6;j++) {
++        c->cnoc_addresses[j]=j?0:cnoc->address;
++        c->cnoc_data[0][j]=j?0:0x40000000;
++        c->cnoc_data[1][j]=j?0:0x60000000|peak_vote(100,cnoc);
++    }
++    for(unsigned j=0;j<8;j++) {
++        c->ddr_addresses[j]=j<3?bcms[j].address:0;
++        unsigned commit=j<3 && (j==2 || bcms[j].vcd!=bcms[j+1].vcd);
++        if(commit)c->ddr_wait_mask|=1u<<j;
++        for(unsigned i=0;i<16;i++)c->ddr_data[i][j]=(i<count && j<3)?
++            (commit?0x40000000:0)|(kbps[i]?0x20000000:0)|peak_vote(kbps[i],bcms+j):0;
++    }
++    return AdrenoHfiStartupSuccess;
++}
+--- a/AdrenoHfiStartup.h
++++ b/AdrenoHfiStartup.h
+@@ -16,6 +16,9 @@
+     uint32_t ddr_addresses[8],ddr_data[16][8];
+     uint32_t acd_version,acd_enable_mask,acd_stride,acd_count,acd_data[32];
+     unsigned enable_ifpc;
++    /* Marble Gen7 performance table has an explicit CX dependency for each
++     * GX level. Original Sheng profile requires this extension to be zero. */
++    uint32_t gpu_cx_votes[16];
+ } AdrenoHfiStartupConfig;
+ typedef enum {
+     AdrenoHfiStageNone,AdrenoHfiStagePerformance,AdrenoHfiStageBandwidth,
+@@ -51,12 +54,18 @@
+  * Unused fixed-capacity slots must be zero. This prevents silently ignoring
+  * unsupported or malformed configuration. No input is authenticated here. */
+ AdrenoHfiStartupStatus AdrenoHfiStartupValidate(const AdrenoHfiStartupConfig *);
++/* Marble profile is CPU-only performance/bandwidth table preparation. It
++ * does not implement Gen7 FW-version negotiation, BCL, DCVS/default votes
++ * or a complete startup sequence. Optional ACD/IFPC must remain disabled. */
++AdrenoHfiStartupStatus AdrenoHfiStartupValidateProfile(const AdrenoHfiStartupConfig *,AdrenoHfiProfile);
+ AdrenoHfiStartupStatus AdrenoHfiStartupValidateServices(const AdrenoHfiStartupServices *);
+ /* Payload excludes header. All output storage must be disjoint from inputs.
+  * Encodes one selected stage; unused optional stages refuse. Failure leaves
+  * payload/header outputs untouched except word_count=0. Capacity >=159. */
+ AdrenoHfiStartupStatus AdrenoHfiStartupEncode(const AdrenoHfiStartupConfig *,
+     AdrenoHfiStartupStage,uint32_t *id,uint32_t *payload,size_t capacity,size_t *word_count);
++AdrenoHfiStartupStatus AdrenoHfiStartupEncodeProfile(const AdrenoHfiStartupConfig *,
++    AdrenoHfiStartupStage,uint32_t *,uint32_t *,size_t,size_t *,AdrenoHfiProfile);
+ /* Single attempt, serialized, caller-owned zero-initialized state. Requires
+  * a real ready GMU, exclusive coherent HFI allocation and active native4K GMU
+  * mappings. Only matching actual ACKs advance the startup sequence. All
+@@ -67,6 +76,8 @@
+  * execution, power/coherence/SMMU readiness, shader submission or a desktop.
+  * Input, state, services, transport, result and shared queues must remain
+  * disjoint and pinned; config remains immutable throughout the sequence. */
++/* Run retains the original Sheng sequence and refuses a Marble transport;
++ * Gen7 table encoding does not authorize running that different sequence. */
+ AdrenoHfiStartupStatus AdrenoHfiStartupRun(AdrenoHfiStartup *,AdrenoHfi *,
+     const AdrenoHfiStartupConfig *,const AdrenoHfiStartupServices *,AdrenoHfiStartupResult *);
+ #ifdef __cplusplus
+--- a/AdrenoHfiStartup.c
++++ b/AdrenoHfiStartup.c
+@@ -20,13 +20,22 @@
+     }
+     return zero(v+n,max-n);
+ }
+-AdrenoHfiStartupStatus AdrenoHfiStartupValidate(const AdrenoHfiStartupConfig *c)
++AdrenoHfiStartupStatus AdrenoHfiStartupValidateProfile(const AdrenoHfiStartupConfig *c,AdrenoHfiProfile profile)
+ {
+-    if(!c || !levels(c->gpu,c->gpu_count,16) || !levels(c->gmu,c->gmu_count,4) ||
++    if((profile!=AdrenoHfiProfileSheng && profile!=AdrenoHfiProfileMarbleGen7) ||
++        !c || !levels(c->gpu,c->gpu_count,16) || !levels(c->gmu,c->gmu_count,4) ||
+         !c->bandwidth_count || c->bandwidth_count>16 || c->enable_ifpc>1 ||
+         !addresses(c->cnoc_addresses,c->cnoc_count,6) ||
+         !addresses(c->ddr_addresses,c->ddr_count,8))return AdrenoHfiStartupInvalid;
+     if(c->cnoc_wait_mask>>c->cnoc_count || c->ddr_wait_mask>>c->ddr_count)return AdrenoHfiStartupInvalid;
++    if(profile==AdrenoHfiProfileSheng) {
++        if(!zero(c->gpu_cx_votes,16))return AdrenoHfiStartupInvalid;
++    } else {
++        if(c->gpu[0].vote || c->gmu[0].vote || c->gpu_cx_votes[0] || c->gmu_count!=3 ||
++            c->cnoc_count!=1 || c->ddr_count!=3 || c->acd_enable_mask || c->enable_ifpc ||
++            !zero(c->gpu_cx_votes+c->gpu_count,16-c->gpu_count))return AdrenoHfiStartupInvalid;
++        for(unsigned i=0;i<c->gpu_count;i++)if(c->gpu_cx_votes[i]>255)return AdrenoHfiStartupInvalid;
++    }
+     for(unsigned i=0;i<c->cnoc_count;++i)
+         for(unsigned j=0;j<c->ddr_count;++j)if(c->cnoc_addresses[i]==c->ddr_addresses[j])return AdrenoHfiStartupInvalid;
+     for(unsigned i=0;i<2;++i)if(!zero(c->cnoc_data[i]+c->cnoc_count,6-c->cnoc_count))return AdrenoHfiStartupInvalid;
+@@ -44,12 +53,15 @@
+     }
+     return AdrenoHfiStartupSuccess;
+ }
+-AdrenoHfiStartupStatus AdrenoHfiStartupEncode(const AdrenoHfiStartupConfig *c,
+-    AdrenoHfiStartupStage stage,uint32_t *id,uint32_t *p,size_t capacity,size_t *count)
++AdrenoHfiStartupStatus AdrenoHfiStartupValidate(const AdrenoHfiStartupConfig *c)
++{return AdrenoHfiStartupValidateProfile(c,AdrenoHfiProfileSheng);}
++AdrenoHfiStartupStatus AdrenoHfiStartupEncodeProfile(const AdrenoHfiStartupConfig *c,
++    AdrenoHfiStartupStage stage,uint32_t *id,uint32_t *p,size_t capacity,size_t *count,AdrenoHfiProfile profile)
+ {
+     if(!count)return AdrenoHfiStartupInvalid;
+     *count=0;
+-    if(!id || !p || capacity<159 || AdrenoHfiStartupValidate(c)!=AdrenoHfiStartupSuccess ||
++    if(!id || !p || capacity<159 || AdrenoHfiStartupValidateProfile(c,profile)!=AdrenoHfiStartupSuccess ||
++        (profile==AdrenoHfiProfileMarbleGen7 && stage!=AdrenoHfiStagePerformance && stage!=AdrenoHfiStageBandwidth) ||
+         stage<AdrenoHfiStagePerformance || stage>AdrenoHfiStageStart ||
+         ((stage==AdrenoHfiStageAcdEnable || stage==AdrenoHfiStageAcdTable) && !c->acd_enable_mask) ||
+         (stage==AdrenoHfiStageIfpc && !c->enable_ifpc))return AdrenoHfiStartupInvalid;
+@@ -60,7 +72,9 @@
+         for(size_t i=0;i<n;++i)p[i]=0;
+         p[0]=c->gpu_count;p[1]=c->gmu_count;
+         for(unsigned i=0;i<c->gpu_count;++i) {
+-            p[2+3*i]=c->gpu[i].vote;p[3+3*i]=UINT32_MAX;p[4+3*i]=(uint32_t)(c->gpu[i].hz/1000);
++            p[2+3*i]=c->gpu[i].vote;
++            p[3+3*i]=profile==AdrenoHfiProfileMarbleGen7?c->gpu_cx_votes[i]:UINT32_MAX;
++            p[4+3*i]=(uint32_t)(c->gpu[i].hz/1000);
+         }
+         for(unsigned i=0;i<c->gmu_count;++i) {
+             p[50+2*i]=c->gmu[i].vote;p[51+2*i]=(uint32_t)(c->gmu[i].hz/1000);
+@@ -87,6 +101,9 @@
+     }
+     *id=message;*count=n;return AdrenoHfiStartupSuccess;
+ }
++AdrenoHfiStartupStatus AdrenoHfiStartupEncode(const AdrenoHfiStartupConfig *c,
++    AdrenoHfiStartupStage stage,uint32_t *id,uint32_t *p,size_t capacity,size_t *count)
++{return AdrenoHfiStartupEncodeProfile(c,stage,id,p,capacity,count,AdrenoHfiProfileSheng);}
+ AdrenoHfiStartupStatus AdrenoHfiStartupValidateServices(const AdrenoHfiStartupServices *s)
+ {
+     if(!s || !s->now_us || !s->wait_us || !s->check_health ||
+@@ -111,7 +128,7 @@
+ {
+     if(!r)return AdrenoHfiStartupInvalid;
+     *r=(AdrenoHfiStartupResult){0};r->resources_must_retain=1;
+-    if(!state || !h || AdrenoHfiStartupValidateServices(s)!=AdrenoHfiStartupSuccess ||
++    if(!state || !h || h->profile!=AdrenoHfiProfileSheng || AdrenoHfiStartupValidateServices(s)!=AdrenoHfiStartupSuccess ||
+         AdrenoHfiStartupValidate(c)!=AdrenoHfiStartupSuccess)return AdrenoHfiStartupInvalid;
+     if(state->poisoned || h->poisoned)return AdrenoHfiStartupPoisoned;
+     if(state->attempted || state->completed || h->pending_header)return AdrenoHfiStartupBusy;

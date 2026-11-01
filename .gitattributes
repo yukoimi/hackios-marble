@@ -1,0 +1,5 @@
+* text=auto eol=lf
+reference/v259/kernel-source/** -text
+prebuilt/** -text
+*.jpg -text
+*.png -text

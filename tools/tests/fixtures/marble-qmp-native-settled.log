@@ -1,0 +1,16 @@
+marble-qmp-native: context phase=link-pending transport=fe7bd218 core=fe7bd398 low=1 link=1 channels=0 local=0 remote=0 refs=0 terminated=1 poll_present=0 backend_rva=d3c0 client_empty=1
+marble-qmp-native: listener index=0 transport=qmp remote=rpm callback=fe615358 clock_rva=e358 priv=fe635ce0 relevant=1 passive=1
+marble-qmp-native: listeners PASS=1 total=1 matched=1 unknown=0 terminated=1 callback_calls=0
+marble-qmp-native: context phase=before transport=fe7bd218 core=fe7bd398 low=2 link=2 channels=0 local=0 remote=0 refs=0 terminated=1 poll_present=0 backend_rva=d190 client_empty=1
+marble-qmp-native: link_progress PASS=1 native_event_calls=1 table_writes=0 raw_writes=0 TX_calls=0 DSP_start=0
+marble-qmp-native: context phase=remote-reconciled transport=fe7bd218 core=fe7bd398 low=2 link=2 channels=1 local=0 remote=2 refs=1 terminated=1 poll_present=0 backend_rva=d190 client_empty=1
+marble-qmp-native: remote_reconcile PASS=1 calls=1 observed_remote_up=1 remote_id=cd TX_calls=0 DSP_start=0
+marble-qmp-native: preflight qualified=1 exact_abi=1 transport=qmp remote=rpm channel=aop_apps open_attempted=0 firmware_changed=1 TX_calls=0 DSP_start=0
+marble-qmp-native: open_before watchdog_seconds=30 limit_us=2000000 TX_calls=0 DSP_start=0
+marble-qmp-native: open_return status=0 result=0 handle=fa8b3a18
+marble-qmp-native: connected PASS=1 events=1 invalid=0 RX=0 TX=0
+marble-qmp-native: close_return status=0 result=0
+marble-qmp-native: settle PASS=1 rounds=1 stale_handle_calls=0 raw_writes=0 TX_calls=0 DSP_start=0
+marble-qmp-native: context phase=after transport=fe7bd218 core=fe7bd398 low=2 link=2 channels=1 local=0 remote=2 refs=1 terminated=1 poll_present=0 backend_rva=d190 client_empty=1
+marble-qmp-native: close_state descriptor=1 original_restoration=1 legacy_contract_pass=0 peer_closed=0 settled_closed=1 local=ffff0000,ffff0000 remote=ffff,ffff channels=1 native_handles_released=0 local_client_released=1
+marble-qmp-native: complete PASS=1 attempted=1 active=0 dirty=0 connected=1 local_down=1 remote_down=1 invalid=0 RX=0 TX=0 elapsed_us=5245 watchdog_clear=0 native_event_calls=6 peer_close_contract=0 settled_close_contract=1 original_restoration=1 raw_writes=0 TX_calls=0 NPA_calls=0 PAS_calls=0 DSP_start=0 storage_access=0

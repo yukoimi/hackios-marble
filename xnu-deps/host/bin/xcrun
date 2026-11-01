@@ -18,6 +18,8 @@ case "$show" in
 esac
 if [ -n "$find" ]; then
   for d in "$HB" /usr/bin; do [ -x "$d/$find" ] && { echo "$d/$find"; exit 0; }; done
+  # Distribution LLVM tools may live in a versioned bin directory on PATH.
+  command -v "$find" && exit 0
   exit 1
 fi
 [ $# -gt 0 ] && exec "$@"

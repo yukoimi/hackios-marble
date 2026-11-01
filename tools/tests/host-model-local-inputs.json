@@ -1,0 +1,8 @@
+{
+  "tools/tests/marble-pil-segment.c": {
+    "required_files": [
+      "out/n12turbo-rom/daily-material/firmware/image/adsp2.mdt"
+    ],
+    "arguments": []
+  }
+}

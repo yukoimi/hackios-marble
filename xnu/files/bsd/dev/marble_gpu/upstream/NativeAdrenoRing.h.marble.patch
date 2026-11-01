@@ -1,0 +1,21 @@
+--- a/NativeAdrenoRing.h
++++ b/NativeAdrenoRing.h
+@@ -69,6 +69,10 @@
+     IOReturn attach(const NativeAdrenoRingIo *,const NativeAdrenoRingCache *,
+         void *ring,size_t ring_bytes,uint64_t ring_iova,
+         void *fence,size_t fence_bytes,uint64_t fence_iova);
++    /* marble adapter: adopt the completed bring-up ring without rewriting
++     * active SQE pointers or losing its last real timestamp. No MMIO stores. */
++    IOReturn adoptIdle(const NativeAdrenoRingIo *,const NativeAdrenoRingCache *,
++        void *ring,void *fence,uint32_t position,uint32_t timestamp);
+     /* Programs nothing. Refuses while submissions are unobserved or poisoned,
+      * because only the caller can establish real GPU quiescence and unmap. */
+     IOReturn detach();
+@@ -97,5 +101,7 @@
+     uint32_t completedFence() const {return completed_;}
+     uint32_t submissions() const {return submissions_;}
+     uint32_t readPointer() const {return rptr_shadow_;}
++    /* Exact end of the last successful publication, including variable prologue. */
++    uint32_t writePointer() const {return next_;}
+ };
+ #endif

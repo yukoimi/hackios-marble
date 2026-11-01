@@ -44,6 +44,7 @@
 #include <sys/systm.h>
 
 #include "MiniIOSurface.h"
+#include "MarbleGPURing.inc"
 
 extern "C" void redwood_tl(const char * format, ...) __printflike(1, 2);
 
@@ -60,6 +61,7 @@ bool redwood_gpu_map(uint64_t address, uint64_t phys, bool read_only);
 void redwood_gpu_mapped(void);
 void redwood_gpu_unmap(uint64_t address, uint64_t size);
 void redwood_gpu_to_memory(void * start, uint64_t size);
+bool redwood_gpu_to_memory_fenced(void * start, uint64_t size, uint32_t last_use);
 uint32_t redwood_gpu_submit(const uint64_t * addresses, const uint32_t * words, uint32_t count);
 extern uint32_t gpu_log;
 bool redwood_gpu_done(uint32_t fence);
@@ -208,6 +210,7 @@ static IOLock * gGPULock;                       /* around everything that is the
 static bool gGPUReported;
 static bool gGPUCached;                         /* boot-arg gpu_cached=1 */
 static bool gGPUSaidSetIova;                    /* MSM_INFO_SET_IOVA has been refused out loud once */
+static uint64_t gGPUClientID;
 
 /* What the last seconds' submissions were and cost here, for the log. */
 static struct {
@@ -216,6 +219,9 @@ static struct {
 	uint32_t submissions, commands, buffers, surfaces, waits, over;
 	uint32_t made, given_again;             /* buffers of their own made for programs, and of those kept ones given again */
 	uint64_t making;                        /* ... and the time it took to make the others */
+	uint64_t submit_time, submit_max;       /* wall time inside the hardware backend */
+	uint32_t submit_timed;
+	uint32_t cache_ranges, cache_queued;
 } gGPUStat;
 
 /* Wait for the 3D core to be done with submission `fence`; with the lock held, which is let go of while waiting. */
@@ -268,6 +274,8 @@ MiniIOSurfaceDrawn(MiniIOSurface * surface, uint64_t milliseconds)
 	}
 	return done;
 }
+
+#include "MarbleGPUScale.inc"
 
 /*
  * Boot-arg touch_lat=1: a line for every wait of a program's for the GPU that took a millisecond or
@@ -439,6 +447,7 @@ class RedwoodGPUUserClient : public IOUserClient
 	OSDeclareDefaultStructors(RedwoodGPUUserClient);
 
 	task_t                  fTask;
+	uint64_t                fContextID;             /* monotonic kernel identity; never a recycled pointer */
 	struct gpu_buffer *     fBuffers;               /* handle n is fBuffers[n - 1] */
 	uint32_t                fNextQueue;
 	uint32_t                fNextBuffer;            /* where the search for a free handle starts: one given back is not the next given */
@@ -482,6 +491,8 @@ RedwoodGPUUserClient::initWithTask(task_t owningTask, void * securityID, UInt32 
 		return false;
 	}
 	fTask = owningTask;
+	fContextID = __atomic_add_fetch(&gGPUClientID, 1, __ATOMIC_RELAXED);
+	if (fContextID == 0) return false;
 	return true;
 }
 
@@ -579,6 +590,8 @@ RedwoodGPUUserClient::reap(void)
 IOReturn
 RedwoodGPUUserClient::clientClose(void)
 {
+	/* Never acquire the scale gate while holding the GPU gate. */
+	marbleScaleClose(fContextID);
 	if (fBuffers != NULL) {
 		IOLockLock(gGPULock);
 		/* what the client had the GPU do last may still be going on, in these buffers */
@@ -982,7 +995,15 @@ RedwoodGPUUserClient::submit(struct msm_gem_submit * request)
 		} else if (!b->seen || !gGPUCached) {
 			continue;
 		}
-		redwood_gpu_to_memory(b->kernel, b->size);
+		/* Imported handles in other clients name the same MiniIOSurface.
+		 * Its latest fence covers reads as well as writes. A completed old
+		 * use permits this range's cache maintenance while unrelated BOs
+		 * remain queued; a dependency still drains to full hardware idle. */
+		uint32_t lastUse = b->fence;
+		if (b->surface != NULL && (int32_t)(b->surface->drawn - lastUse) > 0)
+			lastUse = b->surface->drawn;
+		gGPUStat.cache_queued += redwood_gpu_to_memory_fenced(b->kernel, b->size, lastUse);
+		gGPUStat.cache_ranges++;
 		gGPUStat.flushed += b->size;
 	}
 	redwood_gpu_to_memory(NULL, 0);                 /* (and what was written last is in memory: a barrier) */
@@ -1004,7 +1025,15 @@ RedwoodGPUUserClient::submit(struct msm_gem_submit * request)
 		addresses[count] = b->address + cmds[i].submit_offset;
 		words[count++] = cmds[i].size / 4;
 	}
-	request->fence = redwood_gpu_submit(addresses, words, count);
+	{
+		uint64_t submit_start = mach_absolute_time();
+		marble_ring_select_context(fContextID, request->queueid);
+		request->fence = redwood_gpu_submit(addresses, words, count);
+		uint64_t elapsed = mach_absolute_time() - submit_start;
+		gGPUStat.submit_time += elapsed;
+		if (elapsed > gGPUStat.submit_max) gGPUStat.submit_max = elapsed;
+		gGPUStat.submit_timed++;
+	}
 	/*
 	 * The ring is full and the core is not reading it: it has stopped. With gpu_recover=1 it is
 	 * reset and given this submission again -- after a reset the ring is empty, so there is
@@ -1074,8 +1103,16 @@ RedwoodGPUUserClient::submit(struct msm_gem_submit * request)
 		absolutetime_to_nanoseconds(gGPUStat.taking, &taking);
 		redwood_gpu_worked(&worked, &timed, by);
 		uint64_t making;
+		uint64_t submit_time, submit_max;
 
 		absolutetime_to_nanoseconds(gGPUStat.making, &making);
+		absolutetime_to_nanoseconds(gGPUStat.submit_time, &submit_time);
+		absolutetime_to_nanoseconds(gGPUStat.submit_max, &submit_max);
+		IOLog("RedwoodGPU: backend wall: %u submits mean_us=%llu max_us=%llu; CPU call only, completion may be deferred\n",
+		    gGPUStat.submit_timed, gGPUStat.submit_timed ? submit_time / NSEC_PER_USEC / gGPUStat.submit_timed : 0,
+		    submit_max / NSEC_PER_USEC);
+		IOLog("RedwoodGPU: cache ranges=%u with_unrelated_group_queued=%u; dependency and alias fences retained\n",
+		    gGPUStat.cache_ranges, gGPUStat.cache_queued);
 		IOLog("RedwoodGPU: buffers: %u made in %llu us each, %u kept ones given again (%llu MB kept)\n", gGPUStat.made,
 		    gGPUStat.made ? making / NSEC_PER_USEC / gGPUStat.made : 0, gGPUStat.given_again, fKeptBytes >> 20);
 		IOLog("RedwoodGPU: %u submissions in %llu ms: %u command buffers and %u buffers named, %llu KB out of the cache "
@@ -1166,6 +1203,18 @@ IOReturn
 RedwoodGPUUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments * args,
     IOExternalMethodDispatch * dispatch, OSObject * target, void * reference)
 {
+	if (selector == MARBLE_SCALE_SELECTOR) {
+		if (!args->structureInput || !args->structureOutput || fBuffers == NULL ||
+		    args->structureInputSize != sizeof(marble_scale_wire) ||
+		    args->structureOutputSize != sizeof(marble_scale_wire) ||
+		    args->scalarInputCount || args->scalarOutputCount) return kIOReturnBadArgument;
+		if (!redwood_gpu_ready()) return kIOReturnNotReady;
+		marble_scale_wire q;
+		memcpy(&q,args->structureInput,sizeof(q));
+		IOReturn result=marbleScaleCall(fContextID,&q);
+		if (result==kIOReturnSuccess) memcpy(args->structureOutput,&q,sizeof(q));
+		return result;
+	}
 	union {
 		struct msm_param param;
 		struct msm_gem_new gemNew;
@@ -1209,19 +1258,34 @@ RedwoodGPUUserClient::externalMethod(uint32_t selector, IOExternalMethodArgument
 	case kMsmGemInfo:
 		ret = gemInfo(&r.gemInfo);
 		break;
-	case kMsmGemCpuPrep:                            /* is the GPU done with a buffer: with all it has been given, here */
+	case kMsmGemCpuPrep: {                          /* wait for this BO's last use, including GPU reads */
 		waitBegan = mach_absolute_time();
 		IOLockLock(gGPULock);
+		b = buffer(r.cpuPrep.handle);
+		if (b == NULL) {
+			IOLockUnlock(gGPULock);
+			ret = kIOReturnBadArgument;
+			break;
+		}
+		/* A fresh/upload BO need not wait for an unrelated window's batch.
+		 * Every successful submit stamps ALL named BOs before dropping this
+		 * lock; close/reap keeps their memory alive until this fence retires. */
+		uint32_t prepFence = b->fence;
+		/* IOSurface imports can alias across clients/handles. Its shared last
+		 * use is protected by the same lock and must also be complete. */
+		if (b->surface != NULL && (int32_t)(b->surface->drawn - prepFence) > 0)
+			prepFence = b->surface->drawn;
 		patience = (r.cpuPrep.op & MSM_PREP_NOSYNC) ? 0 : millisecondsUntil(&r.cpuPrep.timeout);
-		if (!gpuWait(redwood_gpu_last(), patience)) {
+		if (!gpuWait(prepFence, patience)) {
 			ret = kIOReturnBusy;
 			if (patience == 0 && !(r.cpuPrep.op & MSM_PREP_NOSYNC)) {
-				waitOver(&r.cpuPrep.timeout, redwood_gpu_last());
+				waitOver(&r.cpuPrep.timeout, prepFence);
 			}
 		}
 		IOLockUnlock(gGPULock);
 		slowWait("cpu-prep", waitBegan);
 		break;
+	}
 	case kMsmGemSubmit:
 		ret = submit(&r.submit);
 		break;

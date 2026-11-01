@@ -1,0 +1,32 @@
+{
+  "repository": "lz4/lz4",
+  "tag": "v1.10.0",
+  "commit": "ebb370ca83af193212df4dcbadcc5d87bc0de2f0",
+  "files": [
+    {
+      "path": "lib/lz4.c",
+      "git_blob": "a2f7abee19fb9a5c768f2a6c266acf5b571f0855",
+      "sha256": "9396f7de527bc8435de9c7569fb7998e56545a84b4f3c2d808c0235c01774539"
+    },
+    {
+      "path": "lib/lz4.h",
+      "git_blob": "80e3e5ca04d22db9ec4980dfc43672a13984aa15",
+      "sha256": "26b82efc53d1570f3b54eef02e9c4764c1ad374ff03cac04e2ced5ea4d4c552f"
+    },
+    {
+      "path": "lib/LICENSE",
+      "git_blob": "488491695a6b6984aa3a49a8392b192ed2bcac1d",
+      "sha256": "8b58c446121a109ccf32edc094bba3010a3d85e4ee3702950db55e4d3e87736c"
+    },
+    {
+      "path": "lib/lz4hc.c",
+      "git_blob": "4d8c36a6978fcae09e4c4a936572b4b271513466",
+      "sha256": "126cafafdb91767e6e55238298a910903851b35b2cee27ce80ae2280469ee232"
+    },
+    {
+      "path": "lib/lz4hc.h",
+      "git_blob": "992bc8cdd7703e7ff49b01137a00bf6f004683a6",
+      "sha256": "e43824e8a9ba16f54100c4ccbccfa5782a858ca9ab83c48aac303fea3e76e21e"
+    }
+  ]
+}

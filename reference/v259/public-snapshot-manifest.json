@@ -1,0 +1,188 @@
+{
+  "remote-verification.json": {
+    "original_bytes": 7222,
+    "original_sha256": "fc352407bddb3be9faa1aee3437dbae73271a6cf85ed0c24e4d5ebf9f47a4caa",
+    "public_bytes": 7222,
+    "public_sha256": "fc352407bddb3be9faa1aee3437dbae73271a6cf85ed0c24e4d5ebf9f47a4caa"
+  },
+  "sources.json": {
+    "original_bytes": 247,
+    "original_sha256": "462046b46d810b9d1ab92322a5f9e7cfd6e3424b965d5f6d70326317aa9a7a46",
+    "public_bytes": 247,
+    "public_sha256": "462046b46d810b9d1ab92322a5f9e7cfd6e3424b965d5f6d70326317aa9a7a46"
+  },
+  "source/xnu/files/bsd/dev/marble_audio_native_kernel.h": {
+    "original_bytes": 23468,
+    "original_sha256": "2d811f00e4bc645819788fb678b29230efacdc73567f6d0be822769e2013dbbb",
+    "public_bytes": 23468,
+    "public_sha256": "2d811f00e4bc645819788fb678b29230efacdc73567f6d0be822769e2013dbbb"
+  },
+  "source/xnu/files/bsd/dev/redwood_audio.c": {
+    "original_bytes": 17124,
+    "original_sha256": "322ed68fe0a8a6704515708c0de1ffdab3f4df5fc9e32ac945015e3ba8ea9c49",
+    "public_bytes": 17124,
+    "public_sha256": "322ed68fe0a8a6704515708c0de1ffdab3f4df5fc9e32ac945015e3ba8ea9c49"
+  },
+  "source/xnu/files/bsd/dev/redwood_guard.c": {
+    "original_bytes": 13333,
+    "original_sha256": "46bcf0eeb766e8ba10871d281a05cafdce27d9d8abc0992ecbd51c75f9d7e8eb",
+    "public_bytes": 13333,
+    "public_sha256": "46bcf0eeb766e8ba10871d281a05cafdce27d9d8abc0992ecbd51c75f9d7e8eb"
+  },
+  "source/xnu/files/bsd/sys/marble_audio_board_gate.h": {
+    "original_bytes": 3088,
+    "original_sha256": "d111064afd91ae24b01033cc4ba54e8a246f8ee876e869d260ba0661ad3d4374",
+    "public_bytes": 3088,
+    "public_sha256": "d111064afd91ae24b01033cc4ba54e8a246f8ee876e869d260ba0661ad3d4374"
+  },
+  "source/xnu/files/bsd/sys/marble_audio_endpoint.h": {
+    "original_bytes": 8811,
+    "original_sha256": "bf72d689c39ce804e6443784977d6d84c5a7f2a00f6fa2cf75b8f7790929f496",
+    "public_bytes": 8811,
+    "public_sha256": "bf72d689c39ce804e6443784977d6d84c5a7f2a00f6fa2cf75b8f7790929f496"
+  },
+  "source/xnu/files/bsd/sys/marble_audio_glink.h": {
+    "original_bytes": 6325,
+    "original_sha256": "9d219a7e2e0e793a245f2eda12e8ad3afcba696b83c0f1fe80e1252aeeb82484",
+    "public_bytes": 6325,
+    "public_sha256": "9d219a7e2e0e793a245f2eda12e8ad3afcba696b83c0f1fe80e1252aeeb82484"
+  },
+  "source/xnu/files/bsd/sys/marble_audio_owner.h": {
+    "original_bytes": 5114,
+    "original_sha256": "261b9e3a3e3a5c2b1de5c2e965e9256ab2600c46cd24a5827b71dbb372dc7965",
+    "public_bytes": 5114,
+    "public_sha256": "261b9e3a3e3a5c2b1de5c2e965e9256ab2600c46cd24a5827b71dbb372dc7965"
+  },
+  "source/xnu/files/bsd/sys/marble_audio_pcm_probe.h": {
+    "original_bytes": 1156,
+    "original_sha256": "ffe33af834257d89d021c404992db4321e3a74b5f1d7abf5283e6c9c07f83402",
+    "public_bytes": 1156,
+    "public_sha256": "ffe33af834257d89d021c404992db4321e3a74b5f1d7abf5283e6c9c07f83402"
+  },
+  "source/xnu/files/bsd/sys/marble_audio_proof.h": {
+    "original_bytes": 2133,
+    "original_sha256": "ca5edebaf196b72a6145548a8b151a79eae6dce3ca4d7edd35d282e6603bde14",
+    "public_bytes": 2133,
+    "public_sha256": "ca5edebaf196b72a6145548a8b151a79eae6dce3ca4d7edd35d282e6603bde14"
+  },
+  "source/xnu/files/bsd/sys/marble_audio_queue.h": {
+    "original_bytes": 2307,
+    "original_sha256": "db700b715df257e516d2d854890b955bd2a4745ecaca9103fa14c3a136d97373",
+    "public_bytes": 2307,
+    "public_sha256": "db700b715df257e516d2d854890b955bd2a4745ecaca9103fa14c3a136d97373"
+  },
+  "source/xnu/files/bsd/sys/marble_audio_refill.h": {
+    "original_bytes": 1008,
+    "original_sha256": "294b36a71424532726d9d0af329f65eb83e97e7f2c0e8e3e13d8e71db1aed06d",
+    "public_bytes": 1008,
+    "public_sha256": "294b36a71424532726d9d0af329f65eb83e97e7f2c0e8e3e13d8e71db1aed06d"
+  },
+  "source/xnu/files/bsd/sys/marble_audio_smem.h": {
+    "original_bytes": 4329,
+    "original_sha256": "fab813927d7b74827eeaec99beae404aa27a5785b47811e7026ecd2c8607a981",
+    "public_bytes": 4329,
+    "public_sha256": "fab813927d7b74827eeaec99beae404aa27a5785b47811e7026ecd2c8607a981"
+  },
+  "source/xnu/files/bsd/sys/marble_audio_stream.h": {
+    "original_bytes": 7641,
+    "original_sha256": "076a9d2313c92b4c4a10fa39c803474b25db3c41c99eafb6ae818bf788b3d1d5",
+    "public_bytes": 7641,
+    "public_sha256": "076a9d2313c92b4c4a10fa39c803474b25db3c41c99eafb6ae818bf788b3d1d5"
+  },
+  "source/xnu/files/bsd/sys/marble_audio_stream_window.h": {
+    "original_bytes": 3042,
+    "original_sha256": "aec75188dae915c39f29c388cbf6f82cc592fd702113b5e3d90927a9614fbfb7",
+    "public_bytes": 3042,
+    "public_sha256": "aec75188dae915c39f29c388cbf6f82cc592fd702113b5e3d90927a9614fbfb7"
+  },
+  "source/xnu/files/bsd/sys/redwood_audio.h": {
+    "original_bytes": 9044,
+    "original_sha256": "833c55eaaa092449dba2af4b12eff525a2d7b24d12eb27df45a3af85d091c90f",
+    "public_bytes": 9044,
+    "public_sha256": "833c55eaaa092449dba2af4b12eff525a2d7b24d12eb27df45a3af85d091c90f"
+  },
+  "source/xnu/files/bsd/sys/marble_audio_wire/marble_audio_clock.h": {
+    "original_bytes": 2750,
+    "original_sha256": "d39d488e0cc4bf043eb777e8ca7aad454000b44bbab8033808d3a72e7b1aaaf8",
+    "public_bytes": 2750,
+    "public_sha256": "d39d488e0cc4bf043eb777e8ca7aad454000b44bbab8033808d3a72e7b1aaaf8"
+  },
+  "source/xnu/files/bsd/sys/marble_audio_wire/marble_glink_data.h": {
+    "original_bytes": 1050,
+    "original_sha256": "fb080207ef17a71a4e19644066a96416ff67bc4583301ab5799dc80da3d804c6",
+    "public_bytes": 1050,
+    "public_sha256": "fb080207ef17a71a4e19644066a96416ff67bc4583301ab5799dc80da3d804c6"
+  },
+  "source/xnu/files/bsd/sys/marble_audio_wire/marble_glink_wire.h": {
+    "original_bytes": 4292,
+    "original_sha256": "ab80d42d461f153464ad49ff1778565311d054ecca78ed79ea39f320f02b46b7",
+    "public_bytes": 4292,
+    "public_sha256": "ab80d42d461f153464ad49ff1778565311d054ecca78ed79ea39f320f02b46b7"
+  },
+  "source/xnu/files/bsd/sys/marble_audio_wire/marble_gpr.h": {
+    "original_bytes": 2156,
+    "original_sha256": "7466f3f0c31e25b6ebad9bd6b4952142002f9da421ab6b18496f8a96ad68f69e",
+    "public_bytes": 2156,
+    "public_sha256": "7466f3f0c31e25b6ebad9bd6b4952142002f9da421ab6b18496f8a96ad68f69e"
+  },
+  "source/xnu/files/bsd/sys/marble_audio_wire/marble_mfc_graph.h": {
+    "original_bytes": 2064,
+    "original_sha256": "03beb28acd5554cf73568ae91feab285daea463c2bc3ab8c92793ccde588362d",
+    "public_bytes": 2064,
+    "public_sha256": "03beb28acd5554cf73568ae91feab285daea463c2bc3ab8c92793ccde588362d"
+  },
+  "source/xnu/files/bsd/sys/marble_audio_wire/marble_pcm_data.h": {
+    "original_bytes": 3210,
+    "original_sha256": "7052a064137c7455110440a5e2eb15b8f7969c1479941cfcd99f73afcfa541e2",
+    "public_bytes": 3210,
+    "public_sha256": "7052a064137c7455110440a5e2eb15b8f7969c1479941cfcd99f73afcfa541e2"
+  },
+  "source/xnu/files/bsd/sys/marble_audio_wire/marble_pcm_graph.h": {
+    "original_bytes": 1837,
+    "original_sha256": "6bf6fea709658b2d60171b02a61c6409ff768551fabdba121349d8a43ccdc41b",
+    "public_bytes": 1837,
+    "public_sha256": "6bf6fea709658b2d60171b02a61c6409ff768551fabdba121349d8a43ccdc41b"
+  },
+  "source/xnu/files/bsd/sys/marble_audio_wire/marble_pcm_memory.h": {
+    "original_bytes": 2014,
+    "original_sha256": "260e96592dd5330ccc73c7d17c261118a107079be33f6d8fb3e3d77ef52a8ab7",
+    "public_bytes": 2014,
+    "public_sha256": "260e96592dd5330ccc73c7d17c261118a107079be33f6d8fb3e3d77ef52a8ab7"
+  },
+  "source/xnu/files/bsd/sys/marble_audio_wire/marble_tdm_config.h": {
+    "original_bytes": 1350,
+    "original_sha256": "9c8116fea28ec2b550963b41af0b7b9a7370f9af6fd0d740851c6dcfd2012c74",
+    "public_bytes": 1350,
+    "public_sha256": "9c8116fea28ec2b550963b41af0b7b9a7370f9af6fd0d740851c6dcfd2012c74"
+  },
+  "source/xnu/files/bsd/sys/marble_audio_wire/marble_tdm_graph.h": {
+    "original_bytes": 2957,
+    "original_sha256": "0c8ddbc1e6d7ab6987e77165a564b58b3e46b10227e36c50168341c10ade838c",
+    "public_bytes": 2957,
+    "public_sha256": "0c8ddbc1e6d7ab6987e77165a564b58b3e46b10227e36c50168341c10ade838c"
+  },
+  "source/xnu/files/bsd/sys/marble_audio_wire/marble_tdm_run.h": {
+    "original_bytes": 2245,
+    "original_sha256": "734450cf6a5262b9c481f818781a339ecac4f7bfc7e8693718aca44ba6da2f07",
+    "public_bytes": 2245,
+    "public_sha256": "734450cf6a5262b9c481f818781a339ecac4f7bfc7e8693718aca44ba6da2f07"
+  },
+  "source/xnu/files/bsd/sys/marble_audio_wire/sources.json": {
+    "original_bytes": 1487,
+    "original_sha256": "737a7afdd30dadf9ef7119a9d62a5b77946194c7b63a102632113dabab1983c3",
+    "public_bytes": 1487,
+    "public_sha256": "737a7afdd30dadf9ef7119a9d62a5b77946194c7b63a102632113dabab1983c3"
+  },
+  "xnu/files/bsd/dev/marble_audio_native_kernel.h": {
+    "original_bytes": 23468,
+    "original_sha256": "2d811f00e4bc645819788fb678b29230efacdc73567f6d0be822769e2013dbbb",
+    "public_bytes": 23468,
+    "public_sha256": "2d811f00e4bc645819788fb678b29230efacdc73567f6d0be822769e2013dbbb"
+  },
+  "xnu/files/bsd/sys/marble_audio_stream_window.h": {
+    "original_bytes": 3042,
+    "original_sha256": "aec75188dae915c39f29c388cbf6f82cc592fd702113b5e3d90927a9614fbfb7",
+    "public_bytes": 3042,
+    "public_sha256": "aec75188dae915c39f29c388cbf6f82cc592fd702113b5e3d90927a9614fbfb7"
+  }
+}

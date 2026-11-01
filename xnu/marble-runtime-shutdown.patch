@@ -1,0 +1,14 @@
+diff --git a/bsd/kern/kern_shutdown.c b/bsd/kern/kern_shutdown.c
+--- a/bsd/kern/kern_shutdown.c
++++ b/bsd/kern/kern_shutdown.c
+@@ -190,6 +190,10 @@ reboot_kernel(int howto, char *message)
+ 		return EBUSY;
+ 	}
+ 
++	/* Stop DMA while its worker can still run, before subsystem shutdown. */
++	extern void redwood_adreno_stop(void);
++	if (!(howto & RB_PANIC)) redwood_adreno_stop();
++
+ 	lck_mtx_lock(&vm_swap_data_lock);
+ 
+ 	/* Turn OFF future swapfile reclaimation / compaction etc.*/

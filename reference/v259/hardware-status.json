@@ -1,0 +1,13 @@
+{
+  "image_sha256": "3f1f45c3e2eaaee18f4354a4ae4fdb4ff8180906856ae0d440e7970f1414765f",
+  "hardware_status": "PASS_TWO_STREAM24_BOARD_HELD_XNU_OWNER_PCM24_MUTED_BOARD",
+  "boot_allowed": true,
+  "evidence": [
+    "out\\audio-display-dma-v259-live",
+    "out\\audio-display-dma-v259b-live"
+  ],
+  "audio_acceptance": false,
+  "continuous_playback": false,
+  "HAL_sink": false,
+  "physical_output": false
+}

@@ -1,0 +1,67 @@
+--- a/osfmk/arm64/cpu.c
++++ b/osfmk/arm64/cpu.c
+@@ -81,6 +81,7 @@
+ #include <libkern/section_keywords.h>
+ 
+ extern boolean_t        idle_enable;
++#include "marble_idle_probe.h"
+ extern uint64_t         wake_abstime;
+ 
+ #if WITH_CLASSIC_S2R
+@@ -487,6 +488,10 @@
+ 	cpu_data_t     *cpu_data_ptr = getCpuDatap();
+ 	uint64_t        new_idle_timeout_ticks = 0x0ULL, lastPop;
+ 	bool idle_disallowed = false;
++#if defined(GENERIC_PSCI_SMP)
++	struct marble_idle_sample *probe = marble_idle_enabled ? &marble_idle_samples[cpu_number()] : NULL;
++	if (probe) probe->entries++;
++#endif
+ 
+ 	if (__improbable((!idle_enable))) {
+ 		idle_disallowed = true;
+@@ -495,6 +500,9 @@
+ 	}
+ 
+ 	if (__improbable(idle_disallowed)) {
++#if defined(GENERIC_PSCI_SMP)
++		if (probe) probe->disallowed++;
++#endif
+ 		Idle_load_context();
+ 	}
+ 
+@@ -526,6 +534,9 @@
+ 	}
+ 
+ 	if (__improbable(cpu_proximate_timer())) {
++#if defined(GENERIC_PSCI_SMP)
++		if (probe) probe->proximate++;
++#endif
+ 		if (idle_proximate_timer_wfe == 1) {
+ 			/* Poll issuing WFEs until the expected
+ 			 * timer FIQ arrives.
+@@ -590,10 +601,25 @@
+ 		typhoon_prepare_for_wfi();
+ #endif
+ 		__builtin_arm_dsb(DSB_SY);
++#if defined(GENERIC_PSCI_SMP)
++		uint64_t probe_began = 0;
++		if (probe) {
++			probe_began = __builtin_arm_rsr64("CNTVCT_EL0");
++			probe->pending += cpu_interrupt_is_pending();
++		}
++#endif
+ #if HAS_RETENTION_STATE
+ 		arm64_retention_wfi();
+ #else
+ 		__builtin_arm_wfi();
++#endif
++#if defined(GENERIC_PSCI_SMP)
++		if (probe) {
++			uint64_t elapsed = __builtin_arm_rsr64("CNTVCT_EL0") - probe_began;
++			probe->waits++;
++			probe->ticks += elapsed;
++			if (elapsed > probe->longest) probe->longest = elapsed;
++		}
+ #endif
+ 
+ #if defined(APPLETYPHOON)

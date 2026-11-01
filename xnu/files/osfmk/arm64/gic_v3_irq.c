@@ -80,6 +80,10 @@
 
 static vm_offset_t gicd_base, gicr_base;
 static vm_size_t   gicr_size;
+static uint64_t    gicr_stride = GICR_FRAME_SIZE;
+/* Loader capability marker for source builds; the boot log references it, so
+ * the linker retains it. This is an ABI declaration, not an image signature. */
+static const char gic_dt_stride_profile[] = "MGIC-DT-STRIDE-ABI-v1";
 static vm_offset_t gicr_cpu_base[MAX_CPUS]; /* each processor's redistributor frame */
 
 /*
@@ -399,7 +403,7 @@ gic_find_redistributor(void)
 	/* GICR_TYPER[63:32] packs Aff3.Aff2.Aff1.Aff0 */
 	uint32_t affinity = (uint32_t)(((mpidr >> 32) & 0xff) << 24 | (mpidr & 0xffffff));
 
-	for (vm_offset_t frame = gicr_base; frame + GICR_FRAME_SIZE <= gicr_base + gicr_size; frame += GICR_FRAME_SIZE) {
+	for (vm_offset_t frame = gicr_base; frame + GICR_FRAME_SIZE <= gicr_base + gicr_size;) {
 		uint64_t typer = *(volatile uint64_t *)(frame + GICR_TYPER);
 
 		if ((uint32_t)(typer >> 32) == affinity) {
@@ -408,6 +412,11 @@ gic_find_redistributor(void)
 		if (typer & GICR_TYPER_LAST) {
 			break;
 		}
+		/* GICv4 may include VLPI frames. An explicit DT stride also covers SoC gaps. */
+		uint64_t stride = gicr_stride;
+		if ((typer & (1u << 1)) && stride < 0x40000) stride = 0x40000;
+		if (stride > gicr_base + gicr_size - frame) break;
+		frame += stride;
 	}
 	panic("gic: no redistributor for MPIDR 0x%llx", mpidr);
 }
@@ -437,9 +446,16 @@ gic_v3_irq_cpu_init(void)
 		gicd_base = ml_io_map(soc_base + reg[0], reg[1]);
 		gicr_base = ml_io_map(soc_base + reg[2], reg[3]);
 		gicr_size = reg[3];
+		if (SecureDTGetProperty(entry, "redistributor-stride", &prop, &prop_size) == kSuccess &&
+		    prop_size == sizeof(uint64_t)) {
+			gicr_stride = *(const uint64_t *)prop;
+			if (gicr_stride < GICR_FRAME_SIZE || (gicr_stride & 0xffff) || gicr_stride > 0x1000000)
+				panic("gic: invalid redistributor stride 0x%llx", gicr_stride);
+		}
 		if (gicd_base == 0 || gicr_base == 0) {
 			panic("gic: cannot map the distributor/redistributor");
 		}
+		kprintf("gic: %s redistributor stride 0x%llx\n", gic_dt_stride_profile, gicr_stride);
 	} else if (gicr_cpu_base[cpu] != 0) {
 		return;
 	}

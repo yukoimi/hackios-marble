@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/UniXNU/AdrenoPM4",
+  "commit": "445f8fe6d115738352b9d78dc70af6d61aa7f62f",
+  "files": {
+    "AdrenoPM4.c": "c4b0227859a1e771c5f349524b718b08444f518ef960bfa4b50f6fd4ab30ad2f",
+    "AdrenoPM4.h": "86f4e84eece0f2e67f786d03cea8b82c696377fc5af9f890dd164bbfe24abd29"
+  },
+  "scope": "Unmodified packet header encoder/validator only; no A740 register or shader state"
+}

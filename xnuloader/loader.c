@@ -7,15 +7,27 @@
  *   - picks a block of free RAM to be XNU's [physBase, physBase + memSize)
  *   - copies the Mach-O segments there, builds an Apple-format device tree
  *     and a boot_args structure behind the kernel
- *   - exits boot services, turns the MMU off and jumps to the kernel entry
+ *   - keeps boot services resident, turns the MMU off and jumps to the kernel entry
  */
 #include "efi.h"
 #include "identity.h"         /* who iOS shall think we are: from the iPhone's own device tree (mkidentity.py) */
+#include "loader_result.h"
+#ifdef XNU_MARBLE
+#include "marble_policy.h"
+#endif
 
 /* ------------------------------------------------------------------------ */
 /* Fixed conventions shared with the boot shim, the packer and the kernel   */
 
+#ifdef XNU_MARBLE
+/* The standalone EFI entry claims firmware-owned free pages, never a fixed address. */
+static uint64_t marble_payload_base;
+static uint64_t marble_payload_bytes;
+static int marble_smp_dirty;
+#define PAYLOAD_BASE        marble_payload_base
+#else
 #define PAYLOAD_BASE        0xF0000000ULL
+#endif
 #define PAYLOAD_MAGIC       0x50554E58u /* "XNUP" */
 
 struct payload_header { uint32_t magic; uint32_t size; };
@@ -85,7 +97,15 @@ static efi_system_table *ST;
 static efi_boot_services *BS;
 static efi_handle IMAGE;
 
-static char log_buf[32768];
+/* Ten-minute manual runs retain per-second thermal evidence. A full log may
+ * truncate diagnostics, but must never erase status or stop observation. */
+#ifdef XNU_MARBLE_AUDIO_AMP_PROFILE
+/* Per-register Music/OTP readback plus full DSP/SMMU lifecycle exceeds the
+ * ordinary 512KiB inventory buffer. Retain complete evidence in RAM. */
+static char log_buf[2*1024*1024];
+#else
+static char log_buf[512*1024];
+#endif
 static uint32_t log_len;
 
 void *
@@ -188,12 +208,37 @@ put_char(char c)
 }
 
 /* printf subset: %s %x %d (64-bit values), %% */
+#ifdef XNU_MARBLE_LOG_FORMAT_PACK
+#include "marble_log_formats_fw.h"
+void *memmove(void *dst,const void *src,size_t n)
+{
+    uint8_t *d=dst;const uint8_t *s=src;
+    if((uintptr_t)d<(uintptr_t)s)for(size_t i=0;i<n;i++)d[i]=s[i];
+    else while(n){n--;d[n]=s[n];}
+    return dst;
+}
+#endif
+#ifdef XNU_MARBLE_LOG_PREFIX_PACK
+#include "marble_log_prefixes.h"
+#endif
 static void
 print(const char *fmt, ...)
 {
 	__builtin_va_list ap;
 	__builtin_va_start(ap, fmt);
+#ifdef XNU_MARBLE_LOG_FORMAT_PACK
+	fmt=marble_format_get(fmt);
+#endif
 	for (; *fmt; fmt++) {
+#ifdef XNU_MARBLE_LOG_PREFIX_PACK
+		/* Lossless constant fragments only; format arguments are untouched. */
+		if ((unsigned char)fmt[0] == 1 && (unsigned char)fmt[1] < MARBLE_LOG_PREFIX_COUNT) {
+			const char *fragment = marble_log_prefixes[(unsigned char)fmt[1]];
+			while (*fragment) put_char(*fragment++);
+			fmt++;
+			continue;
+		}
+#endif
 		if (*fmt != '%') {
 			put_char(*fmt);
 			continue;
@@ -251,6 +296,176 @@ clean_dcache(uint64_t start, uint64_t end)
 	__asm__ volatile ("dsb sy");
 }
 
+#ifdef XNU_MARBLE
+#include "marble_touch.h"
+#include "marble_thermal.h"
+#include "marble_cpucap.h"
+#include "marble_efi_idle.h"
+#include "marble_thermal_window.h"
+#include "marble_vblank.h"
+static unsigned marble_thermal_latched;
+static MarbleCPUCap marble_cap;
+static unsigned marble_cap_requested;
+static MarbleEFIIdle marble_idle;
+static unsigned marble_idle_requested, marble_idle_qualified;
+static unsigned marble_short_thermal_requested, marble_gpu_preview_requested;
+static MarbleThermalWindow marble_heat_window;
+static struct {
+	uint64_t leases, waits, ticks, maximum, immediate, late, max_poll_gap, restore_failures;
+} marble_standby;
+static uint64_t marble_idle_control(void *context)
+{ (void)context; return READ_SYSREG(CNTKCTL_EL1); }
+static int marble_idle_write(void *context, uint64_t value)
+{
+	(void)context;
+	__asm__ volatile("msr cntkctl_el1, %0\nisb" :: "r"(value) : "memory");
+	return 1;
+}
+static uint64_t marble_idle_counter(void *context)
+{
+	(void)context;
+	uint64_t ticks;
+	/* Serialize the measurement around WFE; an early counter read must not
+	 * make a real wait appear to have returned immediately. */
+	__asm__ volatile("isb\nmrs %0, cntvct_el0" : "=r"(ticks) :: "memory");
+	return ticks;
+}
+static void marble_idle_wfe(void *context)
+{ (void)context; __asm__ volatile("dsb sy\nwfe" ::: "memory"); }
+static const MarbleEFIIdleOps marble_idle_ops = {
+	marble_idle_control, marble_idle_write, marble_idle_counter, marble_idle_wfe, NULL
+};
+static uint64_t marble_idle_us(uint64_t ticks)
+{
+	uint64_t frequency = marble_idle.frequency;
+	return frequency ? ticks/frequency*1000000+(ticks%frequency)*1000000/frequency : 0;
+}
+static int marble_idle_acquire(void)
+{
+	/* This register's EL1 event semantics do not apply to a VHE host at EL2. */
+	if (READ_SYSREG(CurrentEL) != 4) return 0;
+	uint64_t daif = READ_SYSREG(DAIF);
+	__asm__ volatile("msr daifset, #0xf" ::: "memory");
+	int ok = marble_efi_idle_begin(&marble_idle, &marble_idle_ops, READ_SYSREG(CNTFRQ_EL0));
+	__asm__ volatile("msr daif, %0" :: "r"(daif) : "memory");
+	return ok;
+}
+static int marble_idle_release(void)
+{
+	uint64_t daif = READ_SYSREG(DAIF);
+	__asm__ volatile("msr daifset, #0xf" ::: "memory");
+	int ok = marble_efi_idle_restore(&marble_idle, &marble_idle_ops);
+	__asm__ volatile("msr daif, %0" :: "r"(daif) : "memory");
+	return ok;
+}
+static int marble_idle_pause(void)
+{
+	uint64_t daif = READ_SYSREG(DAIF);
+	__asm__ volatile("msr daifset, #0xf" ::: "memory");
+	int ok = marble_efi_idle_wait(&marble_idle, &marble_idle_ops);
+	__asm__ volatile("msr daif, %0" :: "r"(daif) : "memory");
+	return ok;
+}
+static void marble_idle_log(const char *phase, unsigned pass)
+{
+	print("marble-efi-idle: %s PASS=%d active=%d dirty=%d failed=%d saved=%x now=%x period_us=%d waits=%d wait_us=%d max_wait_us=%d immediate=%d late=%d max_poll_gap_us=%d\n",
+	    phase, (uint64_t)pass, (uint64_t)marble_idle.active, (uint64_t)marble_idle.dirty,
+	    (uint64_t)marble_idle.failed, marble_idle.saved, READ_SYSREG(CNTKCTL_EL1),
+	    marble_idle_us(marble_idle.period), marble_idle.waits, marble_idle_us(marble_idle.ticks),
+	    marble_idle_us(marble_idle.maximum), marble_idle.immediate, marble_idle.late,
+	    marble_idle_us(marble_idle.max_poll_gap));
+}
+static int marble_idle_probe(void)
+{
+	if (marble_idle_qualified) return 1;
+	if (!marble_idle_acquire()) { marble_idle.failed=1; marble_idle_log("probe", 0); return 0; }
+	/* Clear one stale local event once; never seed every measured WFE. */
+	__asm__ volatile("sevl\nwfe" ::: "memory");
+	for (unsigned i = 0; i < 64; i++) {
+		marble_efi_idle_poll(&marble_idle, READ_SYSREG(CNTVCT_EL0));
+		if (!marble_idle_pause()) break;
+	}
+	int restored = marble_idle_release();
+	marble_idle_qualified = restored && marble_efi_idle_probe_ok(&marble_idle);
+	if (!marble_idle_qualified) marble_idle.failed = 1;
+	marble_idle_log("probe", marble_idle_qualified);
+	return marble_idle_qualified;
+}
+/* One shared cache line, kernel maps it uncached. Only XNU writes request;
+ * only EFI writes result. 1=request, 2=acquired, 3=failed. */
+struct marble_cap_shared { uint64_t magic; volatile uint64_t request,result; char padding[0x2000-24]; };
+/* EFI image relocation is only 4-KiB aligned. Reserve an entire 16-KiB
+ * mapping plus alignment slack outside the conventional-memory XNU window.
+ * Keep the original allocation for the lifetime of this EFI application. */
+static uint64_t marble_cap_allocation;
+static struct marble_cap_shared *marble_cap_mailbox;
+#include "marble_scanout.h"
+static MarbleScanoutShared *marble_scanout;
+static uint64_t marble_snapshot_pa;
+#define MARBLE_SNAPSHOT_BYTES 0x1000000ULL
+static int marble_thermal_read(void *cookie,uint64_t address,uint32_t *value)
+{
+	(void)cookie;
+	*value=*(volatile uint32_t *)(uintptr_t)address;
+	__asm__ volatile("dmb sy" ::: "memory");
+	return 0;
+}
+static int marble_thermal_check(unsigned starting)
+{
+	MarbleThermalSample sample;
+	int valid=marble_thermal_snapshot(marble_thermal_read,NULL,&sample);
+	uint64_t ticks=READ_SYSREG(CNTVCT_EL0),frequency=READ_SYSREG(CNTFRQ_EL0);
+	unsigned windowed=marble_short_thermal_requested || marble_gpu_preview_requested;
+	unsigned limit=starting?(windowed?50000:40000):
+	    windowed?55000:marble_cap_requested?45000:55000;
+	int ok=valid && sample.maximum_mc<(int)limit;
+	if(windowed)
+		ok=marble_thermal_window_duration(&marble_heat_window,ticks,frequency,valid,sample.maximum_mc,starting,marble_gpu_preview_requested?60:10);
+	uint64_t us=ticks/frequency*1000000+(ticks%frequency)*1000000/frequency;
+	print("marble-thermal: valid=%d sensors=%d maximum_mc=%s%d controller=%d sensor=%d limit_mc=%d ok=%d at_us=%d\n",
+	    (uint64_t)valid,(uint64_t)sample.valid,sample.maximum_mc<0?"-":"",
+	    (uint64_t)(sample.maximum_mc<0?-sample.maximum_mc:sample.maximum_mc),
+	    (uint64_t)sample.controller,(uint64_t)sample.sensor,(uint64_t)limit,(uint64_t)ok,us);
+	if(windowed)
+		print("marble-thermal-window: profile=%s starting=%d hot50_ms=%d max_hot50_ms=%d reason=%d ok=%d at_us=%d\n",
+		    marble_gpu_preview_requested?"gpu90-v2":"short18-v1",
+		    (uint64_t)starting,marble_heat_window.hot?(ticks-marble_heat_window.hot_since)*1000/frequency:0,
+		    marble_heat_window.maximum_hot_ticks*1000/frequency,(uint64_t)marble_heat_window.reason,(uint64_t)ok,us);
+	return ok;
+}
+#include "marble_display_fw.h"
+#include "marble_buttons_fw.h"
+#include "marble_brightness_fw.h"
+static int marble_vblank_probe(void)
+{
+    /* Both raw-EFI and mapped-XNU reads reset before useful evidence. */
+    print("marble-vblank: disabled pending display-bus ownership; no MMIO reads\n");
+    return 0;
+}
+static int marble_cap_write(void *cookie,uint64_t address,uint32_t value)
+{
+	(void)cookie;
+	if(address!=0x17d92320 && address!=0x17d93320 &&
+	   address!=0x17d09808 && address!=0x17d0980c)return -1;
+	*(volatile uint32_t *)(uintptr_t)address=value;
+	__asm__ volatile("dsb sy" ::: "memory");
+	return 0;
+}
+static void marble_cap_log(const char *phase,unsigned pass)
+{
+	print("marble-cpucap: %s PASS=%d active=%d dirty=%d changed=%x\n",phase,
+	    (uint64_t)pass,(uint64_t)marble_cap.active,(uint64_t)marble_cap.dirty,(uint64_t)marble_cap.changed);
+	for(unsigned d=0;d<2;d++) {
+		uint32_t now=0,mirror=0;
+		marble_thermal_read(NULL,marble_cpucap_base(d)+0x320,&now);
+		marble_thermal_read(NULL,marble_cpucap_mirror(d),&mirror);
+		print("marble-cpucap: domain=%d saved=%d row=%d requested_khz=%d now=%d mirror_saved=%x mirror_now=%x\n",
+		    (uint64_t)(d+1),(uint64_t)marble_cap.saved[d],(uint64_t)marble_cap.row[d],
+		    (uint64_t)marble_cap.khz[d],(uint64_t)now,(uint64_t)marble_cap.mirror[d],(uint64_t)mirror);
+	}
+}
+#endif
+
 /* ------------------------------------------------------------------------ */
 /* Log persistence: raw write to a GPT partition (phone only)               */
 
@@ -298,6 +513,7 @@ static char out_buf[2 * 1024 * 1024];
 static uint8_t block_buffer[BLOCK_BUFFER_SIZE] __attribute__((aligned(0x2000)));
 static const char *staged_data = out_buf;   /* what "upload" sends: normally the log in out_buf */
 static uint64_t staged_len;
+static uint64_t composed_log_len; /* independent of screenshot/recording staging */
 
 static void
 compose_logs(const char *klog, uint64_t klog_len)
@@ -319,7 +535,7 @@ compose_logs(const char *klog, uint64_t klog_len)
 		memcpy(out_buf + n, end, sizeof(end) - 1);
 		n += sizeof(end) - 1;
 	}
-	staged_len = n;
+	staged_len = composed_log_len = n;
 }
 
 static int hc_list_is_uefis(void);
@@ -330,6 +546,11 @@ static void hc_take_back(const char *when);
 static void
 write_logs(const char *klog, uint64_t klog_len)
 {
+#ifdef XNU_MARBLE
+	/* Do not even discover a log partition. USB fetches this RAM buffer. */
+	compose_logs(klog, klog_len);
+	return;
+#else
 	efi_block_io *bio = find_log_partition();
 
 	compose_logs(klog, klog_len);
@@ -375,6 +596,7 @@ write_logs(const char *klog, uint64_t klog_len)
 	print("log: %d bytes written to logdump (%x), read back %s (%x)\n", len, ws,
 	    EFI_ERROR(ws) ? "not tried" : same ? "the same" : "DIFFERENT", rs);
 	compose_logs(klog, klog_len);
+#endif
 }
 
 static void
@@ -517,6 +739,7 @@ struct platform {
 	const char *name;
 	uint64_t io_base, io_size;       /* one window covering the SoC peripherals */
 	uint64_t gic_dist, gic_redist;   /* GICv3 */
+	uint64_t gic_redist_size, gic_redist_stride; /* zero: legacy 1 MB / 128 KB */
 	uint64_t uart;                   /* PL011, 0 if none */
 	int psci_hvc;                    /* the firmware's power interface is called with HVC, not SMC */
 	int log_other_cpu;               /* keep notes in the log partition while a kernel starts on another core */
@@ -552,6 +775,15 @@ static const struct platform platform_redwood = {
 	.small_cores = 0x0f,
 	.fb_base = 0xE1000000,
 };
+
+#ifdef XNU_MARBLE
+static const struct platform platform_marble = {
+	.name = "marble", .io_base = 0x00400000, .io_size = 0x3FC00000,
+	.gic_dist = 0x17100000, .gic_redist = 0x17180000,
+	.gic_redist_size = 0x200000, .gic_redist_stride = 0x40000,
+	.cores = 8, .core_shift = 8, .small_cores = 0x0f,
+};
+#endif
 
 /*
  * The devices the loader knows, told apart by the framebuffer base their UEFI reports. A port to another
@@ -1036,7 +1268,7 @@ compose_live_log(const struct kernel_live *live, uint64_t slide)
 		PUT(log + live->log_head, ring_at);
 	}
 #undef PUT
-	staged_len = n;
+	staged_len = composed_log_len = n;
 }
 
 static void print(const char *fmt, ...);
@@ -2170,6 +2402,55 @@ block_poll(void)
 	    (uint64_t)(uintptr_t)&block_shared.answer + sizeof(block_shared.answer));
 }
 
+#include "marble_daily_fw.h"
+#include "marble_smp2p_fw.h"
+#include "marble_pil_fw.h"
+#include "marble_power_fw.h"
+#include "marble_qmp_native_fw.h"
+#include "marble_xo_fw.h"
+#include "marble_rpmh_fw.h"
+#include "marble_icb_fw.h"
+#include "marble_icb_lease_fw.h"
+#include "marble_xo_npa_fw.h"
+#include "marble_xo_rpmh_fw.h"
+#include "marble_qup_keepalive_fw.h"
+#include "marble_icb_bandwidth_fw.h"
+#include "marble_icb_run_fw.h"
+#include "marble_adsp_dependencies_fw.h"
+#include "marble_qmp_wire_fw.h"
+#include "marble_qmp_ipcc_fw.h"
+#include "marble_qmp_hold_fw.h"
+#include "marble_glink_smem_fw.h"
+#ifdef XNU_MARBLE_AUDIO_I2C_HOLD
+#include "marble_i2c_inventory_fw.h"
+#endif
+#if defined(XNU_MARBLE_AUDIO_NATIVE_ENDPOINT) || defined(XNU_MARBLE_AUDIO_OWNER)
+static int marble_audio_native_begin(void);
+static int marble_audio_native_service(void);
+static int marble_audio_native_quiet(void);
+static int marble_audio_native_start_qualified(void);
+static unsigned marble_audio_native_request_count(void);
+static void marble_audio_native_stopped(void);
+#endif
+#include "marble_glink_control_fw.h"
+#ifdef XNU_MARBLE_AUDIO_NATIVE_ENDPOINT
+#include "marble_audio_native_fw.h"
+#elif defined(XNU_MARBLE_AUDIO_OWNER)
+#include "marble_audio_owner_fw.h"
+#endif
+#include "marble_irq_observer_fw.h"
+#if defined(XNU_MARBLE_AUDIO_TPL_SAMPLING) || defined(XNU_MARBLE_AUDIO_RUNTIME_SAMPLING)
+#include "marble_tpl_sampler_fw.h"
+#endif
+#ifdef XNU_MARBLE_AUDIO_TPL_EVENTS
+#include "marble_tpl_events_fw.h"
+#endif
+#ifdef XNU_MARBLE_AUDIO_USB_POLL_LEASE
+#include "marble_usb_poll_lease_fw.h"
+#endif
+#include "marble_scm_raw_fw.h"
+#include "marble_adsp_owned_fw.h"
+#include "marble_i2c_inventory_fw.h"
 static void
 charger_start(void)
 {
@@ -2246,6 +2527,77 @@ psci_call(uint64_t function, uint64_t a1, uint64_t a2, uint64_t a3)
 	}
 	return status;
 }
+#ifdef XNU_MARBLE_AUDIO_OWNER
+static struct {uint64_t mpidr,began;int64_t status;unsigned launched,launch_calls;} marble_audio_owner_core;
+#ifdef XNU_MARBLE_AUDIO_OWNER_PREAUTH_TRACE
+static void fb_reply(const char *code,const char *text);
+static unsigned marble_audio_owner_trace_active;
+#endif
+#ifdef XNU_MARBLE_AUDIO_FAST_HANDSHAKE
+static const char *marble_audio_owner_last_phase="owner-not-entered";
+#endif
+static void marble_audio_owner_trace(const char *name,uint64_t value)
+{
+#ifdef XNU_MARBLE_AUDIO_FAST_HANDSHAKE
+    marble_audio_owner_last_phase=name;
+#endif
+    (void)marble_audio_owner_thermal_service();
+    print("aud-owner-trace: phase=%s value=%x\n",name,value);
+#ifdef XNU_MARBLE_AUDIO_OWNER_PREAUTH_TRACE
+    if(marble_audio_owner_trace_active && !marble_pil_auth_attempted) {
+#ifdef XNU_MARBLE_AUDIO_OWNER_PRELAUNCH
+        char message[96];loader_format_result(message,sizeof(message),name,value,0);fb_reply("INFO",message);
+#else
+        fb_reply("INFO",name);
+#endif
+    }
+#endif
+}
+static void marble_audio_owner_simple_trace(const char *name)
+{marble_audio_owner_trace(name,0);}
+static int marble_audio_owner_board_preflight(void);
+static int marble_audio_owner_start_core(void)
+{
+    if(!marble_audio_owner_requested)return 0;
+    if(marble_audio_owner_core.launched) {
+#ifdef XNU_MARBLE_AUDIO_OWNER_PRELAUNCH
+        unsigned reuse=marble_audio_owner_core.status==0 && marble_audio_owner_core.launch_calls==1;
+        print("aud-owner-prelaunch-reuse: PASS=%d CPU_ON_calls=%d no_second_CPU_ON=1 after_QMP_ON=1\n",(uint64_t)reuse,(uint64_t)marble_audio_owner_core.launch_calls);
+        return reuse;
+#else
+        return 0;
+#endif
+    }
+    marble_audio_owner_core.launch_calls++;
+    marble_audio_owner_core.began=READ_SYSREG(CNTVCT_EL0);
+    marble_audio_owner_core.status=psci_call(PSCI_CPU_ON,marble_audio_owner_core.mpidr,
+        (uint64_t)(uintptr_t)&other_cpu_entry,(uint64_t)(uintptr_t)&other_cpu_start);
+    marble_audio_owner_core.launched=marble_audio_owner_core.status==0;
+    return marble_audio_owner_core.launched;
+}
+#ifdef XNU_MARBLE_AUDIO_OWNER_PRELAUNCH
+static int marble_audio_owner_prelaunch_core(void)
+{
+    unsigned qualified=!marble_pil_auth_attempted && !marble_qmp_hold.on_acked && !marble_qmp_wire.attempted &&
+        marble_cap_requested && !marble_cap.active && !marble_cap.dirty &&
+        marble_cap_mailbox && !marble_cap_mailbox->result && !marble_audio_owner_core.launch_calls;
+    uint64_t began=READ_SYSREG(CNTVCT_EL0),freq=READ_SYSREG(CNTFRQ_EL0);
+    unsigned ok=qualified && marble_audio_owner_start_core(),requested=0;
+    if(ok) {
+        do {
+            uint64_t at=(uint64_t)(uintptr_t)marble_cap_mailbox;flush_dcache(at,at+64);
+            if(marble_cap_mailbox->request==1){requested=1;break;}
+            BS->stall(1000);
+        }while((READ_SYSREG(CNTVCT_EL0)-began)*1000000/freq<500000);
+    }
+    uint64_t elapsed=(READ_SYSREG(CNTVCT_EL0)-began)*1000000/freq;
+    ok=ok && requested && elapsed<500000 && !marble_cap.active && !marble_cap.dirty && !marble_cap_mailbox->result;
+    print("aud-owner-prelaunch: PASS=%d phase=before-QMP-channel before_QMP_ON=1 cap_inactive=1 cap_result=0 CPU_ON_calls=%d deferred_cap_service=1 cap_request=%d elapsed_us=%d limit_us=500000 DSP_start=0 FIFO_writes=0\n",
+        (uint64_t)ok,(uint64_t)marble_audio_owner_core.launch_calls,(uint64_t)requested,elapsed);
+    return ok;
+}
+#endif
+#endif
 
 /*
  * Run the kernel on the core with that MPIDR and wait until it is back. Returns 0 when it has
@@ -2260,8 +2612,31 @@ run_on_other_cpu(uint64_t mpidr, uint64_t entry, uint64_t boot_args_pa, const st
     uint64_t budget)
 {
 	uint64_t daif = 0, group1 = 0, started, last_pet, last_battery, last_beat_at, last_beat = 0, noted = 0;
+    uint64_t last_watch=0;
+#ifdef XNU_MARBLE
+	uint64_t thermal_at=READ_SYSREG(CNTVCT_EL0);
+	unsigned idle_fault_reported=0;
+#endif
 	int64_t status;
 	int arrived = 0, watching_only = 0;
+
+#ifdef XNU_MARBLE
+	if (marble_idle_requested) {
+		if (!marble_idle_qualified || !marble_idle_acquire()) {
+			marble_idle_log("acquired", 0);
+			if(marble_display_bus.active)marble_display_clock_release();
+			return -1; /* no secondary has been started */
+		}
+		marble_idle_log("acquired", 1);
+	}
+	marble_cap_mailbox->magic=0x315041435550434dULL;
+	marble_cap_mailbox->request=marble_cap_mailbox->result=0;
+	clean_dcache((uint64_t)(uintptr_t)marble_cap_mailbox,(uint64_t)(uintptr_t)marble_cap_mailbox+64);
+	memset(marble_scanout,0,sizeof(*marble_scanout));
+	marble_scanout->magic=MARBLE_SCANOUT_MAGIC;
+	marble_scanout->capacity=MARBLE_SNAPSHOT_BYTES;
+	clean_dcache((uint64_t)(uintptr_t)marble_scanout,(uint64_t)(uintptr_t)marble_scanout+128);
+#endif
 
 	running_live = live;
 	running_slide = slide;
@@ -2279,14 +2654,47 @@ run_on_other_cpu(uint64_t mpidr, uint64_t entry, uint64_t boot_args_pa, const st
 	clean_dcache((uint64_t)(uintptr_t)loader_ctx, (uint64_t)(uintptr_t)loader_ctx + sizeof(loader_ctx));
 
 	/* the last argument arrives in that core's x0 */
+#ifdef XNU_MARBLE_AUDIO_OWNER
+    if(marble_audio_owner_requested) {
+        marble_audio_owner_core.mpidr=mpidr;marble_audio_owner_core.status=-1;
+        marble_audio_owner_launch=marble_audio_owner_start_core;
+        marble_icb_progress=marble_xo_rpmh_progress=marble_audio_owner_simple_trace;marble_pil_progress=marble_audio_owner_trace;
+#ifdef XNU_MARBLE_AUDIO_OWNER_PRELAUNCH
+        marble_qmp_pre_open_hook=marble_audio_owner_prelaunch_core;
+#endif
+        unsigned ready=marble_audio_owner_board_preflight();
+        marble_audio_owner_trace("owner-board-preflight-return",ready);
+        /* Board acquisition is explicit; the default cross-core proof keeps
+         * both amplifiers and physical pins disconnected. */
+#ifdef XNU_MARBLE_AUDIO_OWNER_BOARD
+        unsigned passed=ready && marble_adsp_owned_cycle(marble_audio_owner_package,marble_audio_owner_package_bytes,1,510);
+#else
+        unsigned passed=ready && marble_adsp_owned_cycle_inner(marble_audio_owner_package,marble_audio_owner_package_bytes,1,510);
+#endif
+#if defined(XNU_MARBLE_AUDIO_TPL_SAMPLING) || defined(XNU_MARBLE_AUDIO_RUNTIME_SAMPLING)
+        if(!marble_tpl_sampler_release())passed=0;
+#endif
+        marble_qmp_pre_open_hook=NULL;
+        marble_audio_owner_launch=NULL;marble_icb_progress=marble_xo_rpmh_progress=NULL;marble_pil_progress=NULL;
+        print("aud-owner-session: PASS=%d launched=%d protocol_completed=%d DMA_restored=%d HAL_sink=0 cold_reset_required=1\n",
+            (uint64_t)passed,(uint64_t)marble_audio_owner_core.launched,(uint64_t)(marble_audio_native.completed==MARBLE_AUDIO_OWNER_PERIODS),(uint64_t)marble_audio_native.restored);
+        status=marble_audio_owner_core.status;
+    } else
+#endif
 	status = psci_call(PSCI_CPU_ON, mpidr, (uint64_t)(uintptr_t)&other_cpu_entry, (uint64_t)(uintptr_t)&other_cpu_start);
 
 	started = last_pet = last_battery = last_beat_at = READ_SYSREG(CNTVCT_EL0);
+#ifdef XNU_MARBLE_AUDIO_OWNER
+    if(marble_audio_owner_core.launched)started=marble_audio_owner_core.began;
+#endif
 	print("core %x: the firmware answers %d to the request to start it\n", mpidr, (uint64_t)status);
 	if (PLAT->log_other_cpu) {
 		flush_log();
 	}
 	while (status == 0) {
+#ifdef XNU_MARBLE
+		if (marble_idle_requested) marble_efi_idle_poll(&marble_idle, READ_SYSREG(CNTVCT_EL0));
+#endif
 		/*
 		 * The first seconds are the ones in which a new arrangement goes wrong, and a machine
 		 * that resets takes this loader's memory with it: where there is storage for the log,
@@ -2344,10 +2752,19 @@ run_on_other_cpu(uint64_t mpidr, uint64_t entry, uint64_t boot_args_pa, const st
 			charger_poll();
 			last_battery = READ_SYSREG(CNTVCT_EL0);
 		}
-		if (arrived && live != NULL) {
-			if (live->heartbeat != last_beat) {
-				last_beat = live->heartbeat;
+		if (arrived && live != NULL && READ_SYSREG(CNTVCT_EL0)-last_watch>=READ_SYSREG(CNTFRQ_EL0)/4) {
+            last_watch=READ_SYSREG(CNTVCT_EL0);
+            /* The watcher and XNU run under different translation/cache
+             * regimes. Match the explicit visibility used for other_cpu_done;
+             * never infer a hung core from one cached heartbeat. */
+            flush_dcache((uint64_t)(uintptr_t)&live->heartbeat,
+                (uint64_t)(uintptr_t)&live->heartbeat+sizeof(live->heartbeat));
+            uint64_t beat=*(volatile const uint64_t *)&live->heartbeat;
+			if (beat != last_beat) {
+				last_beat = beat;
 				last_beat_at = READ_SYSREG(CNTVCT_EL0);
+                print("marble-watch: elapsed_s=%d heartbeat=%d silence_limit_s=%d\n",
+                    seconds_since(started),beat,(uint64_t)SILENCE_SECONDS);
 			} else if (seconds_since(last_beat_at) >= SILENCE_SECONDS) {
 				log_of_hung_kernel(live, slide);
 				status = OTHER_CPU_HUNG;
@@ -2357,6 +2774,45 @@ run_on_other_cpu(uint64_t mpidr, uint64_t entry, uint64_t boot_args_pa, const st
 			block_poll();
 		}
 		usb_poll_command();
+#ifdef XNU_MARBLE
+#ifndef XNU_MARBLE_AUDIO_OWNER
+        mt_poll();marble_buttons_poll();marble_bl_poll();
+#endif
+		if (marble_idle_requested && marble_idle.failed && !idle_fault_reported) {
+			idle_fault_reported=1;
+			marble_thermal_latched=1;
+			marble_idle_log("runtime-fault", 0);
+			if (live && live->magic2==KERNEL_LIVE_MAGIC2) {
+				((struct kernel_live *)(uintptr_t)live)->stop=1;
+				clean_dcache((uint64_t)(uintptr_t)&live->stop,(uint64_t)(uintptr_t)&live->stop+8);
+			}
+		}
+		if(marble_cap_requested && !marble_cap_mailbox->result) {
+			flush_dcache((uint64_t)(uintptr_t)marble_cap_mailbox,(uint64_t)(uintptr_t)marble_cap_mailbox+64);
+			if(marble_cap_mailbox->request==1) {
+				int ok=marble_cpucap_prepare(marble_thermal_read,NULL,&marble_cap) &&
+				    marble_cpucap_apply(marble_thermal_read,marble_cap_write,NULL,&marble_cap);
+				marble_cap_log("acquired",ok);
+				marble_cap_mailbox->result=ok?2:3;
+				clean_dcache((uint64_t)(uintptr_t)marble_cap_mailbox,(uint64_t)(uintptr_t)marble_cap_mailbox+64);
+			}
+		}
+		if (!marble_thermal_latched && seconds_since(thermal_at)>=1) {
+			thermal_at=READ_SYSREG(CNTVCT_EL0);
+			int cap_ok=!marble_cap_requested ||
+			    (marble_cap_mailbox->result==2?marble_cpucap_check(marble_thermal_read,NULL,&marble_cap):
+			    !marble_cap_mailbox->result && seconds_since(started)<5);
+			if (!cap_ok)print("marble-cpucap: runtime request changed; STOP\n");
+			if (!marble_thermal_check(0) || !cap_ok) {
+				marble_thermal_latched=1;
+				print("marble-thermal: STOP requested; no further XNU starts until firmware reboot\n");
+				if (live && live->magic2==KERNEL_LIVE_MAGIC2) {
+					((struct kernel_live *)(uintptr_t)live)->stop=1;
+					clean_dcache((uint64_t)(uintptr_t)&live->stop,(uint64_t)(uintptr_t)&live->stop+8);
+				}
+			}
+		}
+#endif
 		if (block_enabled) {
 			/*
 			 * The pause is spent looking at the kernel's mailbox: with one look a pass, a
@@ -2369,16 +2825,63 @@ run_on_other_cpu(uint64_t mpidr, uint64_t entry, uint64_t boot_args_pa, const st
 				}
 			}
 		} else {
+#ifdef XNU_MARBLE
+			if (marble_idle_requested && !marble_idle.failed) {
+				(void)marble_idle_pause();
+				continue;
+			}
+#endif
 			for (volatile int i = 0; i < 20000; i++) {
 			}
 		}
 	}
 	running_live = NULL;
+#ifdef XNU_MARBLE_AUDIO_USB_POLL_LEASE
+    if(marble_audio_owner_requested && !marble_usb_poll_check_later())status=-1;
+#endif
+
+#ifdef XNU_MARBLE
+	if (marble_idle_requested) {
+		int restored=marble_idle_release();
+		marble_idle_log("restored",restored);
+	}
+#endif
 
 	if (watching_only) {
 		__asm__ volatile ("msr S3_0_C12_C12_7, %0\nisb" : : "r" (group1));
 		__asm__ volatile ("msr daif, %0" : : "r" (daif));
 	}
+#ifdef XNU_MARBLE
+	if(marble_cap_requested && marble_cap.active) {
+		/* Never raise an inherited request while XNU might still be alive.
+		 * Check every participating big core, including the boot core, OFF. */
+		uint64_t until=READ_SYSREG(CNTVCT_EL0)+READ_SYSREG(CNTFRQ_EL0)/10;
+		int off=0;
+		do {
+			off=1;
+			for(unsigned core=4;core<8;core++)
+				if(psci_call(PSCI_AFFINITY_INFO,(uint64_t)core<<PLAT->core_shift,0,0)!=1)off=0;
+		}while(!off && READ_SYSREG(CNTVCT_EL0)<until);
+		int restored=off && marble_cpucap_restore(marble_thermal_read,marble_cap_write,NULL,&marble_cap);
+		if(!restored)marble_cap.dirty=1;
+		marble_cap_log("restored",restored);
+	}
+	if(marble_display_bus.active) {
+		uint64_t until=READ_SYSREG(CNTVCT_EL0)+READ_SYSREG(CNTFRQ_EL0)/10;
+		int off=0;
+		do {
+			off=1;
+			for(unsigned core=4;core<8;core++)
+				if(psci_call(PSCI_AFFINITY_INFO,(uint64_t)core<<PLAT->core_shift,0,0)!=1)off=0;
+		}while(!off && READ_SYSREG(CNTVCT_EL0)<until);
+		if(off) {
+            if(marble_brightness.prepared || marble_brightness.dirty)marble_brightness_runtime(1);
+            marble_bl_box=NULL;
+            marble_display_clock_release();
+        }
+		else {marble_display_bus.dirty=1;print("marble-display-bus: release refused: XNU cores not OFF; lease retained\n");}
+	}
+#endif
 	return status;
 }
 
@@ -2496,8 +2999,11 @@ install_exception_hook(void)
 
 struct payload_info {
 	const uint8_t *kernel;
+	uint32_t kernel_size;
 	const uint8_t *ramdisk;
 	uint32_t ramdisk_size;
+	const uint8_t *audio_dsp;
+	uint32_t audio_dsp_size;
 	const char *cmdline;
 	uint64_t checkpoint;
 	uint64_t forced_base;
@@ -2526,16 +3032,40 @@ parse_payload(struct payload_info *pi, int verbose)
 
 	memset(pi, 0, sizeof(*pi));
 	pi->cmdline = "";
+	if (PAYLOAD_BASE == 0) return 0;
 	if (ph->magic != PAYLOAD_MAGIC) {
 		print("no payload at %x (magic %x)\n", PAYLOAD_BASE, (uint64_t)ph->magic);
 		return 0;
 	}
+	if (ph->size > PAYLOAD_MAX_SIZE - 0x100000 - sizeof(*ph)) {
+		print("payload: size outside allocated buffer\n");
+		return 0;
+	}
+#ifdef XNU_MARBLE
+	if (sizeof(*ph) + (uint64_t)ph->size > marble_payload_bytes) {
+		print("payload: incomplete download\n");
+		return 0;
+	}
+#endif
 	const uint8_t *p = (const uint8_t *)(ph + 1), *pend = p + ph->size;
 	while (p + sizeof(struct payload_entry) <= pend) {
 		const struct payload_entry *e = (const struct payload_entry *)p;
 		const char *text = (const char *)(p + sizeof(*e));
 		if (e->name[0] == 0) {
-			break;
+			return 1;
+		}
+		int terminated = 0;
+		for (unsigned i = 0; i < sizeof(e->name); i++) terminated |= e->name[i] == 0;
+		uint64_t padded = ((uint64_t)e->size + 15) & ~15ULL;
+		if (!terminated || padded > (uint64_t)(pend - p - sizeof(*e))) {
+			print("payload: invalid entry extent or name\n");
+			return 0;
+		}
+		if ((str_eq(e->name, "cmdline") || str_eq(e->name, "physbase") ||
+		    str_eq(e->name, "rdres") || str_eq(e->name, "checkpoint")) &&
+		    (e->size == 0 || text[e->size - 1] != 0)) {
+			print("payload: unterminated text entry\n");
+			return 0;
 		}
 		if (verbose) {
 			print("payload entry '%s' size %x\n", e->name, (uint64_t)e->size);
@@ -2545,6 +3075,10 @@ parse_payload(struct payload_info *pi, int verbose)
 			pi->ramdisk_size = e->size;
 		} else if (str_eq(e->name, "kernel")) {
 			pi->kernel = p + sizeof(*e);
+			pi->kernel_size = e->size;
+		} else if (str_eq(e->name,"audio-dsp")) {
+            if(pi->audio_dsp || e->size!=30180144)return 0;
+            pi->audio_dsp=p+sizeof(*e);pi->audio_dsp_size=e->size;
 		} else if (str_eq(e->name, "cmdline")) {
 			pi->cmdline = text;
 		} else if (str_eq(e->name, "physbase")) {
@@ -2556,9 +3090,10 @@ parse_payload(struct payload_info *pi, int verbose)
 		} else if (str_eq(e->name, "usb")) {
 			pi->usb_mode = 1;                         /* stay in the loader and take commands over USB */
 		}
-		p += sizeof(*e) + ((e->size + 15) & ~15u);
+		p += sizeof(*e) + padded;
 	}
-	return 1;
+	print("payload: missing end entry\n");
+	return 0;
 }
 
 /* ------------------------------------------------------------------------ */
@@ -2616,6 +3151,20 @@ static struct {
 	uint64_t base;
 	uint32_t width, height, stride;
 } SCREEN;
+#ifdef XNU_MARBLE_AUDIO_OWNER
+static int marble_audio_owner_board_preflight(void)
+{
+    unsigned ok=marble_display_memory_info(SCREEN.base,(uint64_t)SCREEN.stride*SCREEN.height) && marble_scm_availability();
+#ifdef XNU_MARBLE_AUDIO_TPL_EVENTS
+    if(ok)ok=marble_tpl_events_qualify();
+#endif
+#ifdef XNU_MARBLE_AUDIO_USB_POLL_LEASE
+    if(ok)ok=marble_usb_poll_qualify(marble_tpl_observer.base);
+    print("aud-usb-poll-preflight: PASS=%d timer_writes=0 DSP_start=0\n",(uint64_t)ok);
+#endif
+    return ok;
+}
+#endif
 static uint64_t win_base, win_size; /* XNU's physical memory window, claimed once */
 static uint64_t resident_rd_size;   /* root image kept at win_base + RESIDENT_RD_OFFSET, 0 if none */
 static char last_result[64] = "idle";
@@ -2623,16 +3172,7 @@ static char last_result[64] = "idle";
 static void
 set_result(const char *what, uint64_t a, uint64_t b)
 {
-	uint32_t saved = log_len;
-	uint32_t start = log_len;
-	print("%s %d %x", what, a, b);
-	uint32_t n = log_len - start;
-	if (n > sizeof(last_result) - 1) {
-		n = sizeof(last_result) - 1;
-	}
-	memcpy(last_result, log_buf + start, n);
-	last_result[n] = 0;
-	log_len = saved;
+    loader_format_result(last_result,sizeof(last_result),what,a,b);
 }
 
 /* Every range of the firmware's memory map of 1 MB or more, and the total of each type. */
@@ -2734,6 +3274,10 @@ static int starts_with(const char *s, const char *prefix);
 static int
 run_kernel(int have_checkpoint, uint64_t checkpoint)
 {
+#ifdef XNU_MARBLE_FIRMWARE_ONLY
+    print("marble: firmware-only image refuses every XNU payload; reset required\n");
+    return 0;
+#else
 	static uint8_t map_buf[65536];
 	uint64_t map_size, map_key, desc_size;
 	uint32_t desc_ver;
@@ -2743,12 +3287,136 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 		print("no kernel in payload\n");
 		return 0;
 	}
+#ifdef XNU_MARBLE
+	if (marble_qmp_native.attempted || marble_qmp_native.dirty || marble_smp2p_attempted || marble_smp2p_dirty || marble_npa_attempted || marble_npa_dirty || marble_npa_active || marble_pil_attempted || marble_glink_observer.active || marble_glink_observer.dirty || marble_smp_dirty || marble_cap.dirty || marble_cap.active || marble_idle.dirty || marble_idle.active || marble_display_bus.dirty || marble_display_bus.active || pi.forced_base || pi.resident_rd || !marble_arguments_ok(pi.cmdline)) {
+		print("marble: refused payload outside the RAM-only big-core policy\n");
+		return 0;
+	}
+	if(marble_has_word(pi.cmdline,"marble_audio_queue=1")) {
+        static const char marker[]="MAUDIO-QUEUE-PROBE-v1";unsigned found=0;
+        for(uint64_t i=0;i+sizeof(marker)<=pi.kernel_size;i++)if(!memcmp((const uint8_t *)pi.kernel+i,marker,sizeof(marker)-1)) {found=1;break;}
+        if(!found || pi.ramdisk_size>0x400000 || resident_rd_size)return 0;
+    }
+#ifdef XNU_MARBLE_AUDIO_OWNER
+    marble_audio_owner_requested=marble_has_word(pi.cmdline,"marble_audio_owner=1");
+#ifdef XNU_MARBLE_AUDIO_OWNER_STREAM
+    if(!marble_has_word(pi.cmdline,"marble_audio_stream=1") || marble_has_word(pi.cmdline,"marble_audio_refill=1"))return 0;
+#else
+    if(marble_has_word(pi.cmdline,"marble_audio_stream=1") || marble_has_word(pi.cmdline,"marble_audio_owner_periods=24"))return 0;
+#endif
+#ifdef XNU_MARBLE_AUDIO_OWNER_REFILL
+    if(!marble_has_word(pi.cmdline,"marble_audio_refill=1"))return 0;
+    {
+        static const char refill_marker[]="MAUDIO-REFILL8-MUTED-v1";unsigned refill_found=0;
+        for(uint64_t i=0;i+sizeof(refill_marker)<=pi.kernel_size;i++)if(!memcmp(pi.kernel+i,refill_marker,sizeof(refill_marker)-1)) {refill_found=1;break;}
+        if(!refill_found)return 0;
+    }
+#else
+    if(marble_has_word(pi.cmdline,"marble_audio_refill=1"))return 0;
+#endif
+#ifdef XNU_MARBLE_AUDIO_BOARD_HELD
+    if(!marble_has_word(pi.cmdline,"marble_audio_board_gate=1"))return 0;
+    {
+        static const char gate_marker[]="MAUDIO-BOARD-QUIET-v1";unsigned gate_found=0;
+        for(uint64_t i=0;i+sizeof(gate_marker)<=pi.kernel_size;i++)if(!memcmp(pi.kernel+i,gate_marker,sizeof(gate_marker)-1)) {gate_found=1;break;}
+        if(!gate_found)return 0;
+    }
+#else
+    if(marble_has_word(pi.cmdline,"marble_audio_board_gate=1"))return 0;
+#endif
+    if(!marble_audio_owner_requested || !pi.audio_dsp || pi.audio_dsp_size!=30180144 ||
+       !marble_has_word(pi.cmdline,"cpus=1") || !marble_has_word(pi.cmdline,"marble_audio_queue=1"))return 0;
+    {
+#ifdef XNU_MARBLE_AUDIO_OWNER_STREAM
+        if(!marble_has_word(pi.cmdline,"marble_audio_owner_periods=24") || !marble_has_word(pi.cmdline,"marble_audio_owner_pcm=1"))return 0;
+        static const char marker[]="MAUDIO-OWNER-XNU-STREAM24-MUTED-v2";
+#elif defined(XNU_MARBLE_AUDIO_OWNER_PCM)
+        if(!marble_has_word(pi.cmdline,"marble_audio_owner_periods=8") || !marble_has_word(pi.cmdline,"marble_audio_owner_pcm=1"))return 0;
+        static const char marker[]="MAUDIO-OWNER-XNU-PCM8-MUTED-v1";
+#elif MARBLE_AUDIO_OWNER_PERIODS == 8
+        if(marble_has_word(pi.cmdline,"marble_audio_owner_pcm=1"))return 0;
+        if(!marble_has_word(pi.cmdline,"marble_audio_owner_periods=8"))return 0;
+        static const char marker[]="MAUDIO-OWNER-XNU-ZERO8-v1";
+#else
+        if(marble_has_word(pi.cmdline,"marble_audio_owner_pcm=1"))return 0;
+        if(marble_has_word(pi.cmdline,"marble_audio_owner_periods=8"))return 0;
+        static const char marker[]="MAUDIO-OWNER-XNU-ZERO-v1";
+#endif
+        unsigned found=0;
+        for(uint64_t i=0;i+sizeof(marker)<=pi.kernel_size;i++)if(!memcmp(pi.kernel+i,marker,sizeof(marker)-1)) {found=1;break;}
+        const uint8_t *driver,*files;
+        if(!found || !marble_adsp_package_open(pi.audio_dsp,pi.audio_dsp_size,&driver,&files) || !marble_audio_owner_initialize())return 0;
+    }
+    marble_audio_owner_package=pi.audio_dsp;marble_audio_owner_package_bytes=pi.audio_dsp_size;
+#else
+    if(pi.audio_dsp || marble_has_word(pi.cmdline,"marble_audio_owner=1"))return 0;
+#endif
+    if(marble_has_word(pi.cmdline,"marble_audio_transport=1")) {
+        static const char marker[]="MAUDIO-NATIVE-GLINK-RO-v1";unsigned found=0;
+        for(uint64_t i=0;i+sizeof(marker)<=pi.kernel_size;i++)if(!memcmp((const uint8_t *)pi.kernel+i,marker,sizeof(marker)-1)) {found=1;break;}
+        if(!found)return 0;
+    }
+	marble_cap_requested=0;
+	marble_idle_requested=0;
+	marble_short_thermal_requested=0;
+	marble_gpu_preview_requested=0;
+    if(marble_has_word(pi.cmdline,"marble_gpu_manual=1"))
+        print("marble-gpu-manual: budget_seconds=600 thermal_policy=gpu90-v2 die_hard_mc=55000 hot50_seconds=60 RAM_only=1\n");
+	for(const char *p=pi.cmdline;*p;p++)
+		if((p==pi.cmdline || p[-1]==' ') && starts_with(p,"marble_cpu_cap=1") &&
+		   (p[16]==' ' || !p[16]))marble_cap_requested=1;
+	for(const char *p=pi.cmdline;*p;p++)
+		if((p==pi.cmdline || p[-1]==' ') && starts_with(p,"marble_efi_idle=1") &&
+		   (p[17]==' ' || !p[17]))marble_idle_requested=1;
+	for(const char *p=pi.cmdline;*p;p++)
+		if((p==pi.cmdline || p[-1]==' ') && starts_with(p,"marble_thermal_short=1") &&
+		   (p[22]==' ' || !p[22]))marble_short_thermal_requested=1;
+	for(const char *p=pi.cmdline;*p;p++)
+		if((p==pi.cmdline || p[-1]==' ') && starts_with(p,"marble_gpu_preview=1") &&
+		   (p[20]==' ' || !p[20]))marble_gpu_preview_requested=1;
+	if(marble_short_thermal_requested && (pi.ramdisk_size>0x400000 || resident_rd_size)) {
+		print("marble-thermal-window: only the small black idle image is permitted\n");return 0;
+	}
+	if(marble_idle_requested && (!marble_idle_qualified || marble_idle.failed ||
+	   pi.checkpoint==CHECKPOINT_SELFTEST || checkpoint==CHECKPOINT_SELFTEST)) {
+		print("marble-efi-idle: requires successful loader-only probe and off-core run\n");return 0;
+	}
+	if(marble_cap_requested) {
+		static const char marker[]="MCPU-MARBLE-CAP-CHECK-v2";
+		int found=0;
+		for(uint64_t i=0;i+sizeof(marker)<=pi.kernel_size;i++)
+			if(!memcmp((const uint8_t *)pi.kernel+i,marker,sizeof(marker))) { found=1;break; }
+		if(!found || pi.checkpoint==CHECKPOINT_SELFTEST || checkpoint==CHECKPOINT_SELFTEST) {
+			print("marble-cpucap: requires matching source kernel and off-core run\n");return 0;
+		}
+	}
+	if (marble_thermal_latched || !marble_thermal_check(1)) {
+		print("marble-thermal: start refused (cool/valid readings required)\n");
+		return 0;
+	}
+#endif
 	if (!have_checkpoint) {
 		checkpoint = pi.checkpoint;
 	}
+#ifdef XNU_MARBLE
+	unsigned requested_cpus = marble_cpu_count(pi.cmdline);
+	if (requested_cpus > 1 && checkpoint == CHECKPOINT_SELFTEST) {
+		print("marble: SMP requires an off firmware-independent boot core\n"); return 0;
+	}
+	int marble_gic_patch = 0;
+	int marble_source_gic = 0;
+	static const char source_gic_marker[] = "MGIC-DT-STRIDE-ABI-v1";
+	for (uint64_t i = 0; i + sizeof(source_gic_marker) <= pi.kernel_size; i++) {
+		if (!memcmp((const uint8_t *)pi.kernel + i, source_gic_marker, sizeof(source_gic_marker))) {
+			marble_source_gic = 1;
+			break;
+		}
+	}
+#endif
 	const uint8_t *kernel = pi.kernel;
 	const struct mach_header_64 *mh = (const struct mach_header_64 *)kernel;
-	if (mh->magic != MH_MAGIC_64) {
+	if (pi.kernel_size < sizeof(*mh) || mh->magic != MH_MAGIC_64 ||
+	    mh->sizeofcmds > pi.kernel_size - sizeof(*mh)) {
 		print("kernel is not a 64-bit Mach-O\n");
 		return 0;
 	}
@@ -2757,11 +3425,30 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	uint64_t vm_lo = ~0ULL, vm_hi = 0, entry_va = 0;
 	const struct load_command *lc = (const struct load_command *)(mh + 1);
 	for (uint32_t i = 0; i < mh->ncmds; i++, lc = (const void *)((const uint8_t *)lc + lc->cmdsize)) {
+		const uint8_t *commands_end = kernel + sizeof(*mh) + mh->sizeofcmds;
+		if ((const uint8_t *)lc + sizeof(*lc) > commands_end || lc->cmdsize < sizeof(*lc) ||
+		    lc->cmdsize > (uint64_t)(commands_end - (const uint8_t *)lc)) {
+			print("invalid Mach-O load command\n"); return 0;
+		}
 		if (lc->cmd == LC_SEGMENT_64) {
 			const struct segment_command_64 *sg = (const void *)lc;
+			if (lc->cmdsize < sizeof(*sg) || sg->fileoff > pi.kernel_size ||
+			    sg->filesize > pi.kernel_size - sg->fileoff || sg->filesize > sg->vmsize ||
+			    sg->vmaddr + sg->vmsize < sg->vmaddr) {
+				print("invalid Mach-O segment\n"); return 0;
+			}
 			if (sg->vmsize == 0) {
 				continue;
 			}
+#ifdef XNU_MARBLE
+			/* Fixed prebuilt's GIC scan must step over the 256 KiB hardware frames. */
+			const uint64_t scan_va = 0xfffffff0074748b0ULL;
+			if (scan_va >= sg->vmaddr && scan_va - sg->vmaddr + 4 <= sg->filesize) {
+				uint32_t insn;
+				memcpy(&insn, kernel + sg->fileoff + scan_va - sg->vmaddr, 4);
+				marble_gic_patch = insn == 0x9141016c;
+			}
+#endif
 			if (sg->vmaddr < vm_lo) {
 				vm_lo = sg->vmaddr;
 			}
@@ -2769,11 +3456,17 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 				vm_hi = sg->vmaddr + sg->vmsize;
 			}
 		} else if (lc->cmd == LC_UNIXTHREAD) {
+			if (lc->cmdsize < 16 + 33 * sizeof(uint64_t)) return 0;
 			/* cmd, cmdsize, flavor, count, x0..x28, fp, lr, sp, pc */
 			entry_va = ((const uint64_t *)((const uint8_t *)lc + 16))[32];
 		}
 	}
 	print("kernel va %x..%x entry %x\n", vm_lo, vm_hi, entry_va);
+#ifdef XNU_MARBLE
+	if (!marble_source_gic && (requested_cpus > 1) != marble_gic_patch) {
+		print("marble: kernel GIC stride does not match requested CPU profile\n"); return 0;
+	}
+#endif
 	if (vm_lo < KERNEL_VIRT_BASE + KERNEL_LINK_OFFSET || entry_va == 0) {
 		print("unexpected kernel layout\n");
 		return 0;
@@ -2844,6 +3537,13 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	if (rd1_size != 0) {
 		print("resident image at pa %x size %x: it is the root (md0), the payload ramdisk is md1\n", rd1_pa, rd1_size);
 	}
+#ifdef XNU_MARBLE
+#ifndef XNU_MARBLE_AUDIO_OWNER
+    mt_attach(rd_pa, rd_resident ? 0 : pi.ramdisk_size);
+    marble_buttons_attach();
+#endif
+    marble_bl_box=NULL;
+#endif
 
 	/* "bootcpu=N" among the kernel's arguments: run it on core N (see run_on_other_cpu) */
 	uint64_t this_mpidr = READ_SYSREG(MPIDR_EL1) & 0xFFFFFF, kernel_mpidr = this_mpidr;
@@ -2879,9 +3579,14 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 		hc_requested |= starts_with(c, "ufs_native=") && (c == pi.cmdline || c[-1] == ' ') && c[11] >= '1' &&
 		    c[11] <= '9';
 	}
+#ifndef XNU_MARBLE_AUDIO_OWNER
 	if (battery_requested) {
 		charger_start();
 	}
+#else
+    battery_requested=0;torch_requested=0;camera_requested=0;
+#endif
+#ifndef XNU_MARBLE
 	if (ufs_requested >= 2) {
 		hc_init();              /* (ufs_native=: UEFI's transfer list kept, before anything reads) */
 	}
@@ -2891,9 +3596,19 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	if (ufs_requested >= 2) {
 		block_start();
 	}
+#else
+	(void)ufs_requested; /* No UFS discovery or block service in this build. */
+#endif
 	if (checkpoint == CHECKPOINT_SELFTEST) {
 		kernel_mpidr = this_mpidr;
 	}
+#ifdef XNU_MARBLE
+	if (checkpoint != CHECKPOINT_SELFTEST &&
+	    (kernel_mpidr == this_mpidr || psci_call(PSCI_AFFINITY_INFO, kernel_mpidr, 0, 0) != 1)) {
+		print("marble: requested XNU core is not OFF; firmware core is not taken\n");
+		return 0;
+	}
+#endif
 
 	/* where the kernel will show its signs of life, and how long it has said it will run */
 	const struct kernel_live *kernel_live = NULL;
@@ -3191,8 +3906,15 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 				if (core < 0 || core >= plat->cores || mpidr == this_mpidr) {
 					continue;
 				}
+#ifdef XNU_MARBLE
+				if (core < 4 || cpu_count >= (int)requested_cpus) continue;
+#endif
 				state = psci_call(PSCI_AFFINITY_INFO, mpidr, 0, 0);
-				if (state == 1 || state == PSCI_NOT_SUPPORTED) {
+				if (state == 1
+#ifndef XNU_MARBLE
+				    || state == PSCI_NOT_SUPPORTED
+#endif
+				    ) {
 					cpu_mpidr[cpu_count++] = mpidr;
 				} else if (state >= 0) {
 					print("core %x is not off (the firmware says %d): not the kernel's to take\n", mpidr, (uint64_t)state);
@@ -3205,6 +3927,11 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 		}
 		print("\n");
 	}
+#ifdef XNU_MARBLE
+	if (cpu_count != (int)requested_cpus) {
+		print("marble: not enough OFF big cores; refused SMP start\n"); return 0;
+	}
+#endif
 
 	dt_begin(&w, "cpus");
 	for (int i = 0; i < cpu_count; i++) {
@@ -3246,9 +3973,95 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	dt_begin(&w, "gic");
 	dt_prop_str(&w, "device_type", "interrupt-controller");
 	dt_prop_str(&w, "compatible", "arm,gic-v3");
-	uint64_t gic_reg[4] = { plat->gic_dist - plat->io_base, 0x10000, plat->gic_redist - plat->io_base, 0x100000 };
+	uint64_t redist = plat->gic_redist;
+	uint64_t redist_size = plat->gic_redist_size ? plat->gic_redist_size : 0x100000;
+	uint64_t redist_stride = plat->gic_redist_stride ? plat->gic_redist_stride : 0x20000;
+#ifdef XNU_MARBLE
+	/* The published kernel scans 128 KB frames. Expose only the boot CPU's real
+	 * frame, avoiding both invalid 128 KB holes and a dependency on rebuilt XNU. */
+	if (requested_cpus == 1) {
+		redist += (kernel_mpidr >> plat->core_shift) * redist_stride;
+		redist_size = 0x20000;
+		print("marble: single-core redistributor %x for MPIDR %x\n", redist, kernel_mpidr);
+	} else {
+		print("marble: SMP redistributors %x size %x stride %x\n", redist, redist_size, redist_stride);
+	}
+#endif
+	uint64_t gic_reg[4] = { plat->gic_dist - plat->io_base, 0x10000, redist - plat->io_base, redist_size };
 	dt_prop(&w, "reg", gic_reg, sizeof(gic_reg));
+	dt_prop_u64(&w, "redistributor-stride", redist_stride);
 	dt_end(&w);
+#ifdef XNU_MARBLE
+	/* Read-only telemetry uses marble's DT addresses, never redwood's defaults. */
+	dt_begin(&w, "marble-cpu-telemetry");
+	dt_prop_str(&w, "compatible", marble_cap_requested?"marble,epss-request-cap-v1":"marble,epss-readonly-v1");
+	if(marble_cap_requested) {
+		uint32_t caps[]={1209600,1171200};
+		dt_prop(&w,"request-cap-khz",caps,sizeof(caps));
+		uint64_t mailbox_pa=(uint64_t)(uintptr_t)marble_cap_mailbox;
+		dt_prop(&w,"cap-mailbox-pa",&mailbox_pa,sizeof(mailbox_pa));
+	}
+	uint64_t epss_regs[] = { 0x17d91000, 0x17d92000, 0x17d93000 };
+	dt_prop(&w, "epss-regs", epss_regs, sizeof(epss_regs));
+	dt_end(&w);
+	if(marble_has_word(pi.cmdline,"marble_audio_transport=1")) {
+		dt_begin(&w,"marble-audio-transport");
+		dt_prop_str(&w,"compatible","marble,smem-glink-readonly-v1");
+		uint64_t smem_window[2]={0x80900000,0x200000};
+		dt_prop(&w,"reg",smem_window,sizeof(smem_window));
+		dt_end(&w);
+	}
+#ifdef XNU_MARBLE_AUDIO_OWNER
+    if(marble_audio_owner_requested) {
+        dt_begin(&w,"marble-audio-owner");dt_prop_str(&w,"compatible","marble,audio-owner-zero-v1");
+        uint64_t owner_window[2]={(uint64_t)(uintptr_t)marble_audio_owner_page,16384};
+        dt_prop(&w,"reg",owner_window,sizeof(owner_window));dt_end(&w);
+    }
+#endif
+#ifndef XNU_MARBLE_AUDIO_OWNER
+	dt_begin(&w, "marble-gpu");
+	dt_prop_str(&w, "compatible", "marble,adreno725-preflight-v1");
+	dt_prop_u32(&w, "chip-id", 0x07030002);
+	uint64_t marble_gpu_windows[] = {
+		0x03d00000,0x40000, 0x03d68000,0x37000, 0x03d90000,0xa000,
+		0x03d50000,0x10000, 0x03da0000,0x40000, 0x0b290000,0x10000,
+		0x03d40000,0x10000
+	};
+	dt_prop(&w, "windows", marble_gpu_windows, sizeof(marble_gpu_windows));
+	uint64_t marble_tbu_windows[] = {0x03de6000,0x20,0x03de9000,0x1000,0x03de6200,8};
+	dt_prop(&w, "tbu-windows", marble_tbu_windows, sizeof(marble_tbu_windows));
+	uint64_t marble_cmd_db_window[] = {0x80860000,0x20000};
+	dt_prop(&w, "cmd-db-window", marble_cmd_db_window, sizeof(marble_cmd_db_window));
+    uint64_t marble_rpmh_window[] = {0x17a20d00,0x100};
+    dt_prop(&w, "rpmh-window", marble_rpmh_window, sizeof(marble_rpmh_window));
+    uint64_t marble_boot_window[] = {0x03d9e000,0x1000};
+    dt_prop(&w, "gmu-boot-window", marble_boot_window, sizeof(marble_boot_window));
+	dt_end(&w);
+	{
+		if(marble_has_word(pi.cmdline,"fb_hw_vsync=1")) {
+			if(marble_display_bus.dirty || !marble_display_counter_probe(1)) {
+				print("marble-display-bus: timing qualification refused; no XNU start\n");return 0;
+			}
+		}
+		if(marble_has_word(pi.cmdline,"marble_brightness=1") && !marble_bl_attach()) {
+			print("marble-brightness-mailbox: qualification failed; no XNU start\n");
+			if(!marble_display_bus.dirty)marble_display_clock_release();
+			return 0;
+		}
+		dt_begin(&w,"marble-display-timing");
+		dt_prop_str(&w,"compatible","marble,sde-video-counter-v1");
+		uint64_t candidates[]={0xae36000,0xae37000};
+		dt_prop(&w,"intf-candidates-pa",candidates,sizeof(candidates));
+		uint64_t scanout_shared_pa=(uint64_t)(uintptr_t)marble_scanout;
+		dt_prop(&w,"scanout-sequence-pa",&scanout_shared_pa,sizeof(scanout_shared_pa));
+		if(marble_display_qualified && marble_display_bus.active && !marble_display_bus.dirty) {
+			dt_prop_u32(&w,"register-access-qualified",1);
+			dt_prop(&w,"qualified-intf-pa",&marble_display_base,sizeof(marble_display_base));
+		}
+		dt_end(&w);
+	}
+#endif /* !audio owner: no GPU/display timing lease */
+#endif
 	if (plat->uart != 0) {
 		dt_begin(&w, "uart0");
 		dt_prop_str(&w, "device_type", "uart");
@@ -3319,7 +4132,27 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 				set_result("hung", loader_ctx[CTX_LOG_LEN], 0);
 				write_logs((const char *)loader_ctx[CTX_LOG_PA], loader_ctx[CTX_LOG_LEN]);
 				return 1;
-			} else if (status != 0) {
+            } else if (status != 0) {
+#ifdef XNU_MARBLE_AUDIO_FAST_HANDSHAKE
+                if(marble_audio_owner_requested && marble_audio_owner_core.launched && kernel_live &&
+                   kernel_live->magic==KERNEL_LIVE_MAGIC && kernel_live->magic2==KERNEL_LIVE_MAGIC2) {
+                    uint64_t span=kernel_live->log_head+kernel_live->log_ring;
+                    uint64_t log=kernel_live->log+slide,lp=kernel_live->log_len+slide;
+                    uint64_t rp=kernel_live->log_ring_at+slide,wp=kernel_live->log_wrapped+slide;
+                    unsigned valid=span>=kernel_live->log_head && span && span<=8*1024*1024 &&
+                        log>=win_base && log-win_base<=win_size && span<=win_size-(log-win_base) &&
+                        lp>=win_base && lp-win_base<=win_size-4 &&
+                        rp>=win_base && rp-win_base<=win_size-4 &&
+                        wp>=win_base && wp-win_base<win_size;
+                    set_result("audio-owner-failed",(uint64_t)(status<0?-status:status),0);
+                    if(valid) {
+                        flush_dcache(lp,lp+4);flush_dcache(rp,rp+4);flush_dcache(wp,wp+1);flush_dcache(log,log+span);
+                        print("aud-owner-failure-log: bounded=1 source=kernel-live-ring read_only=1 acceptance=0\n");
+                        compose_live_log(kernel_live,slide);
+                    } else write_logs(NULL,0);
+                    return 1;
+                }
+#endif
 				/* the kernel was told it would be on that core (return path, device tree): no second try */
 				if (status == OTHER_CPU_NOT_STARTED) {
 					print("core %x was started but never arrived\n", kernel_mpidr);
@@ -3351,6 +4184,11 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	/* ... and its other cores should all be off again: the next kernel cannot start one that is not */
 	for (int i = 1; i < cpu_count; i++) {
 		int64_t state = psci_call(PSCI_AFFINITY_INFO, cpu_mpidr[i], 0, 0);
+
+#ifdef XNU_MARBLE
+		print("marble: returned secondary %x PSCI state %d (OFF=1)\n", cpu_mpidr[i], (uint64_t)state);
+		if (state != 1) marble_smp_dirty = 1;
+#endif
 
 		if (state != 1 && state != PSCI_NOT_SUPPORTED) {
 			print("THE KERNEL LEFT CORE %x RUNNING (the firmware says %d): restart before running another\n", cpu_mpidr[i],
@@ -3405,6 +4243,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	}
 	write_logs(klog, klog_len);
 	return 1;
+#endif
 }
 
 /* ------------------------------------------------------------------------ */
@@ -3507,7 +4346,7 @@ usb_start(void)
  * state changed. Keeps the watchdog fed while idle.
  */
 static int64_t
-usb_wait(uint8_t endpoint)
+usb_wait_events(uint8_t endpoint)
 {
 	/* static: a long transfer is many short waits, and the watchdog must be fed across them */
 	static uint64_t last_pet;
@@ -3519,6 +4358,12 @@ usb_wait(uint8_t endpoint)
 		usb_device_event_data data;
 
 		USB->handle_event(&msg, &size, &data);
+#ifdef XNU_MARBLE
+		/* Fastboot replies/transfers must not stop sampling a held finger. */
+		#ifndef XNU_MARBLE_AUDIO_OWNER
+        if (running_live != NULL) {mt_poll();marble_buttons_poll();}
+#endif
+#endif
 		if (msg == UsbDeviceEventDeviceStateChange) {
 			usb_connected = (data.device_state == UsbDeviceStateConnected);
 			return -1;
@@ -3534,7 +4379,54 @@ usb_wait(uint8_t endpoint)
 			last_pet = READ_SYSREG(CNTVCT_EL0);
 			wdt_pet();
 		}
+#ifdef XNU_MARBLE
+		/* A run or a qualified command-receive wait owns this lease. Bulk
+		 * transfer waits outside a run never acquire one. */
+		if (marble_idle.active && !marble_idle.failed &&
+		    msg == UsbDeviceEventNoEvent) {
+			marble_efi_idle_poll(&marble_idle, READ_SYSREG(CNTVCT_EL0));
+			(void)marble_idle_pause();
+		}
+#endif
 	}
+}
+
+static int64_t
+usb_wait(uint8_t endpoint, unsigned command_wait)
+{
+#ifdef XNU_MARBLE
+	/* Hold the local event source only while waiting for a small command or
+	 * cable event. Restore before command dispatch, bulk transfers or XNU.
+	 * The loader-only probe must already have qualified this boot. */
+	int owned=command_wait && running_live==NULL && marble_idle_qualified &&
+	    !marble_idle.active && !marble_idle.dirty && !marble_idle.failed;
+	if(owned && !marble_idle_acquire()) {
+		marble_idle.failed=1;
+		marble_idle_log("standby-acquire",0);
+		return -1;
+	}
+#else
+	(void)command_wait;
+#endif
+	int64_t result=usb_wait_events(endpoint);
+#ifdef XNU_MARBLE
+	if(owned) {
+		int restored=marble_idle_release();
+		marble_standby.leases++;
+		marble_standby.waits+=marble_idle.waits;
+		marble_standby.ticks+=marble_idle.ticks;
+		marble_standby.immediate+=marble_idle.immediate;
+		marble_standby.late+=marble_idle.late;
+		if(marble_idle.maximum>marble_standby.maximum)marble_standby.maximum=marble_idle.maximum;
+		if(marble_idle.max_poll_gap>marble_standby.max_poll_gap)marble_standby.max_poll_gap=marble_idle.max_poll_gap;
+		if(!restored)marble_standby.restore_failures++;
+		if(!restored || marble_idle.failed) {
+			marble_idle_log("standby-restore",restored);
+			result=-1;
+		}
+	}
+#endif
+	return result;
 }
 
 static int usb_rx_queued;       /* usb_poll_command() has left the receive for the next command with the controller */
@@ -3547,7 +4439,7 @@ usb_rx(uint8_t *buf, uint64_t len)
 	} else if (EFI_ERROR(USB->send(USB_EP_OUT, len, buf))) {
 		return -1;
 	}
-	return usb_wait(USB_EP_OUT);
+	return usb_wait(USB_EP_OUT,len==511);
 }
 
 static int64_t
@@ -3559,7 +4451,7 @@ usb_tx(const uint8_t *data, uint64_t len)
 	if (EFI_ERROR(USB->send(USB_EP_IN, len, usb_tx_buf))) {
 		return -1;
 	}
-	return usb_wait(USB_EP_IN);
+	return usb_wait(USB_EP_IN,0);
 }
 
 static void
@@ -3585,6 +4477,40 @@ fb_reply_data(uint64_t len)
 	usb_tx((const uint8_t *)msg, 12);
 }
 
+#ifdef XNU_MARBLE
+#ifdef XNU_MARBLE_AUDIO_USB_RAM_ONLY
+static unsigned marble_audio_usb_suppressed;
+#endif
+static void marble_pil_usb_trace(const char *step,uint64_t address)
+{
+#ifdef XNU_MARBLE_AUDIO_QUIET_PROGRESS
+    /* Keep all typed register/graph logs in RAM. Omit repetitive USB INFO
+     * handshakes which otherwise become work inside the DSP time window. */
+    static const char *prefixes[]={"audio-clock-","audio-GCC-","audio-register-","audio-amp-round-","audio-amp-PCM-rx",
+        "audio-amp-ring","audio-amp-dispatch","audio-amp-service-","audio-amp-pump-","audio-amp-pending"};
+    for(unsigned i=0;i<sizeof(prefixes)/sizeof(prefixes[0]);i++) {
+        unsigned n=(unsigned)str_len(prefixes[i]);
+        if(str_len(step)>=n && !memcmp(step,prefixes[i],n))return;
+    }
+#endif
+    uint32_t mark=log_len;
+    print("marble-pil-progress: %s address=%x\n",step,address);
+#ifdef XNU_MARBLE_AUDIO_USB_RAM_ONLY
+    if(marble_pil_auth_attempted) {marble_audio_usb_suppressed++;return;}
+#endif
+    log_buf[log_len]=0;fb_reply("INFO",log_buf+mark);
+}
+static void marble_icb_usb_trace(const char *step)
+{
+    uint32_t mark=log_len;
+    print("marble-icb-progress: %s\n",step);
+#ifdef XNU_MARBLE_AUDIO_USB_RAM_ONLY
+    if(marble_pil_auth_attempted) {marble_audio_usb_suppressed++;return;}
+#endif
+    log_buf[log_len]=0;fb_reply("INFO",log_buf+mark);
+}
+#endif
+
 static int
 starts_with(const char *s, const char *prefix)
 {
@@ -3600,17 +4526,642 @@ starts_with(const char *s, const char *prefix)
  * One command from the host. While a kernel runs on another core (running_live) only what does
  * not disturb it: questions, the screen, the log so far, and "oem stop".
  */
+#ifdef XNU_MARBLE_AUDIO_DIGITAL_CAPTURE
+static char marble_audio_capture_bytes[32768];
+static void marble_audio_hex(char *p,uint64_t value,unsigned digits)
+{for(unsigned i=0;i<digits;i++)p[i]="0123456789abcdef"[(value>>(4*(digits-i-1)))&15];}
+static int marble_audio_contains(const char *p,unsigned n,const char *needle)
+{
+    unsigned size=(unsigned)str_len(needle);
+    for(unsigned i=0;size<=n && i<=n-size;i++)if(!memcmp(p+i,needle,size))return 1;
+    return 0;
+}
+static void marble_audio_usb_capture(void)
+{
+    unsigned used=0;
+    for(unsigned at=0;at<log_len;) {
+        unsigned end=at;while(end<log_len && log_buf[end]!='\n')end++;
+        if(end==log_len)break;
+        unsigned n=end-at+1;const char *line=log_buf+at;
+        unsigned selected=starts_with(line,"marble-aw-digital:") || starts_with(line,"marble-aw-profile: complete ") ||
+            starts_with(line,"marble-i2c-amp: complete ") || (starts_with(line,"marble-i2c-amp: write ") &&
+            (marble_audio_contains(line,n,"phase=digital-") || marble_audio_contains(line,n,"phase=reset-assert") || marble_audio_contains(line,n,"phase=reset-restore")));
+        if(selected) {
+            if(n>sizeof(marble_audio_capture_bytes)-used) {fb_reply("INFO","ADC-OVERFLOW");return;}
+            memcpy(marble_audio_capture_bytes+used,line,n);used+=n;
+        }
+        at=end+1;
+    }
+    uint64_t hash=0xcbf29ce484222325ULL;
+    for(unsigned i=0;i<used;i++)hash=(hash^(uint8_t)marble_audio_capture_bytes[i])*0x100000001b3ULL;
+    for(unsigned at=0;at<used;at+=20) {
+        unsigned n=used-at<20?used-at:20;char packet[64]="ADC:";
+        marble_audio_hex(packet+4,at,8);packet[12]=':';
+        for(unsigned i=0;i<n;i++)marble_audio_hex(packet+13+2*i,(uint8_t)marble_audio_capture_bytes[at+i],2);
+        packet[13+2*n]=0;fb_reply("INFO",packet);
+    }
+    char end[64]="ADC-END:";marble_audio_hex(end+8,used,8);end[16]=':';marble_audio_hex(end+17,hash,16);end[33]=0;
+    fb_reply("INFO",end);
+}
+#endif
 static void
 fb_command(char *cmd)
 {
 	int busy = running_live != NULL;
+#ifdef XNU_MARBLE_AUDIO_DIGITAL_CAPTURE
+    marble_pil_log_capture=marble_audio_usb_capture;
+#endif
 
 	{
 		if (busy && (starts_with(cmd, "oem ramdisk") || starts_with(cmd, "download:") || starts_with(cmd, "oem run") ||
 		    starts_with(cmd, "oem selftest") || starts_with(cmd, "oem hang") || starts_with(cmd, "oem recording") ||
 		    starts_with(cmd, "oem sound") || starts_with(cmd, "oem clearscreen") || starts_with(cmd, "oem memmap"))) {
 			fb_reply("FAIL", "a kernel is running (oem stop ends it)");
-		} else if (starts_with(cmd, "oem stop")) {
+		}
+#ifdef XNU_MARBLE
+        else if((marble_npa_dirty || marble_smp2p_dirty || marble_qmp_native.attempted || marble_rpmh_attempted || marble_icb_attempted || marble_xo_npa.attempted) && !starts_with(cmd,"getvar:") && !starts_with(cmd,"upload") &&
+                !str_eq(cmd,"oem log") && !starts_with(cmd,"reboot") && !starts_with(cmd,"oem reboot")) {
+            fb_reply("FAIL","firmware recovery required; only logs/status/reset allowed; watchdog retained");
+        }
+#ifndef XNU_MARBLE_CONTROL_ONLY
+        else if(str_eq(cmd,"oem smp2p-prepare") || str_eq(cmd,"oem smp2p-prepare-notify")) {
+            if(busy || marble_cap.active || marble_cap.dirty || marble_thermal_latched || marble_pil_attempted ||
+               marble_npa_attempted || marble_npa_active || marble_glink_observer.attempted ||
+               marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","requires fresh isolated firmware loader; DSP never started");
+            else {
+                int ok=marble_smp2p_prepare(str_eq(cmd,"oem smp2p-prepare-notify"));
+                print("marble-smp2p-state: attempted=%d dirty=%d DSP_start=0\n",(uint64_t)marble_smp2p_attempted,(uint64_t)marble_smp2p_dirty);
+                fb_reply(ok?"OKAY":"FAIL","AP-owned SMP2P initialization only; no IPCC/DSP start; cold reset required");
+            }
+        }
+        else if (str_eq(cmd, "oem idle-stats")) {
+            print("marble-efi-standby: qualified=%d active=%d dirty=%d failed=%d control=%x leases=%d waits=%d wait_us=%d max_wait_us=%d immediate=%d late=%d max_poll_gap_us=%d restore_failures=%d\n",
+                (uint64_t)marble_idle_qualified,(uint64_t)marble_idle.active,(uint64_t)marble_idle.dirty,
+                (uint64_t)marble_idle.failed,READ_SYSREG(CNTKCTL_EL1),marble_standby.leases,
+                marble_standby.waits,marble_idle_us(marble_standby.ticks),marble_idle_us(marble_standby.maximum),
+                marble_standby.immediate,marble_standby.late,marble_idle_us(marble_standby.max_poll_gap),
+                marble_standby.restore_failures);
+            fb_reply("OKAY", "completed command-wait leases: see oem log");
+        }
+#endif /* standalone preparation/stats omitted */
+        else if (str_eq(cmd, "oem idle-probe")) {
+            if (busy || marble_cap.active || marble_cap.dirty || marble_thermal_latched)
+                fb_reply("FAIL", "requires clean idle loader");
+            else fb_reply(marble_idle_probe() ? "OKAY" : "FAIL", "local event-stream probe: see oem log");
+        }
+#ifndef XNU_MARBLE_AUDIO_QUEUE_ONLY
+#ifdef XNU_MARBLE_I2C_ONLY
+#ifdef XNU_MARBLE_AMP_PROFILE_ONLY
+        else if(str_eq(cmd,"oem i2c-amp-profile")) {
+            if(busy || marble_thermal_latched || marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","fresh loader required");
+            else {
+                marble_i2c_amp_registers_requested=1;marble_i2c_amp_quiet_requested=1;marble_i2c_amp_profile_requested=1;
+                fb_reply(marble_i2c_clock_cycle(1,1,1,1)?"OKAY":"FAIL","AW2032 board Music profile held down/muted, readback/reset; see log");
+            }
+        }
+#endif
+#ifdef XNU_MARBLE_AMP_QUIET_ONLY
+        else if(str_eq(cmd,"oem i2c-amp-quiet")) {
+            if(busy || marble_thermal_latched || marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","fresh loader required");
+            else {
+                marble_i2c_amp_registers_requested=1;marble_i2c_amp_quiet_requested=1;
+                fb_reply(marble_i2c_clock_cycle(1,1,1,1)?"OKAY":"FAIL","AW2032 minimum volume write/readback with reset; see log");
+            }
+        }
+#endif
+#ifdef XNU_MARBLE_AMP_REGISTERS_ONLY
+        else if(str_eq(cmd,"oem i2c-amp-registers")) {
+            if(busy || marble_thermal_latched || marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","fresh loader required");
+            else {
+                marble_i2c_amp_registers_requested=1;
+                fb_reply(marble_i2c_clock_cycle(1,1,1,1)?"OKAY":"FAIL","AW2032 reset-state register snapshot; see log");
+            }
+        }
+#endif
+        else if(str_eq(cmd,"oem i2c-config-blob")) {
+            if(busy || !marble_i2c_dt_blob_bytes)fb_reply("FAIL","no qualified configuration snapshot");
+            else {staged_data=(const char *)marble_i2c_dt_blob;staged_len=marble_i2c_dt_blob_bytes;fb_reply("OKAY","");}
+        }
+        else if(str_eq(cmd,"oem i2c-clock-cycle") || str_eq(cmd,"oem i2c-register-info") || str_eq(cmd,"oem i2c-route-info") || str_eq(cmd,"oem i2c-setup-cycle") || str_eq(cmd,"oem i2c-amp-id")) {
+            if(busy || marble_thermal_latched || marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","fresh loader required");
+            else fb_reply(marble_i2c_clock_cycle(!str_eq(cmd,"oem i2c-clock-cycle"),str_eq(cmd,"oem i2c-route-info") || str_eq(cmd,"oem i2c-setup-cycle") || str_eq(cmd,"oem i2c-amp-id"),str_eq(cmd,"oem i2c-setup-cycle") || str_eq(cmd,"oem i2c-amp-id"),str_eq(cmd,"oem i2c-amp-id"))?"OKAY":"FAIL","bounded QUP2 references/configuration/ID; no amp register data writes; see log");
+        }
+        else if(str_eq(cmd,"oem i2c-inventory") || str_eq(cmd,"oem i2c-dt-info") || str_eq(cmd,"oem i2c-config-snapshot") || str_eq(cmd,"oem i2c-clock-info")) {
+            if(busy || marble_thermal_latched || marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","fresh loader required");
+            else fb_reply((str_eq(cmd,"oem i2c-clock-info")?marble_i2c_clock_info():str_eq(cmd,"oem i2c-config-snapshot")?marble_i2c_config_snapshot():str_eq(cmd,"oem i2c-dt-info")?marble_i2c_dt_inventory():marble_i2c_inventory())?"OKAY":"FAIL","read-only I2C protocol/code inventory; no controller calls");
+        }
+#endif
+#if defined(XNU_MARBLE_GLINK_ONLY) || (!defined(XNU_MARBLE_QMP_ONLY) && !defined(XNU_MARBLE_ICB_ONLY) && !defined(XNU_MARBLE_OWNED_STAGE_ONLY))
+        else if (str_eq(cmd,"oem glink-smem-info")) {
+            if(busy || marble_thermal_latched || marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","fresh loader required");
+            else fb_reply(marble_glink_smem_info()?"OKAY":"FAIL","read-only preallocated SMEM transport; no RX dispatch or DSP; see log");
+        }
+#endif
+#if !defined(XNU_MARBLE_QMP_ONLY) && !defined(XNU_MARBLE_ICB_ONLY)
+#ifndef XNU_MARBLE_HELD_ONLY
+        else if (str_eq(cmd,"oem adsp-owned-boot")) {
+            fb_reply("FAIL","disabled after v69 PAS shutdown; AOP lifecycle remains unqualified");
+        }
+        else if (str_eq(cmd,"oem adsp-qmp-stage")) {
+            fb_reply("FAIL","v73-v75 PAS cleanup unverified; SCM bandwidth remains unqualified");
+        }
+        else if (str_eq(cmd,"oem adsp-scm-qmp-stage")) {
+            fb_reply("FAIL","v78c QMP/PAS cleanup unverified; native GLink state interaction under audit");
+        }
+        else if (str_eq(cmd,"oem adsp-scm-wire-stage")) {
+            fb_reply("FAIL","v82 wire/PAS cleanup unverified; isolate channel handshake before new combination");
+        }
+        else if (str_eq(cmd,"oem adsp-scm-channel-stage")) {
+            fb_reply("FAIL","v83 channel/PAS cleanup unverified; isolate EFI event boundary");
+        }
+        else if (str_eq(cmd,"oem adsp-scm-bounded-stage")) {
+            fb_reply("FAIL","v86 bounded stop reached INTERRUPTED limit; qualify IPCC receive acknowledgement");
+        }
+        else if (str_eq(cmd,"oem adsp-owned-stage") || str_eq(cmd,"oem adsp-scm-stage") || str_eq(cmd,"oem adsp-scm-ipcc-stage")) {
+            if(busy || marble_thermal_latched || marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","fresh loader required");
+            else {
+                marble_icb_progress=marble_xo_rpmh_progress=marble_icb_usb_trace;marble_pil_progress=marble_pil_usb_trace;
+                int ready=marble_display_memory_info(SCREEN.base,(uint64_t)SCREEN.stride*SCREEN.height) && marble_scm_availability();
+                unsigned profile=str_eq(cmd,"oem adsp-scm-ipcc-stage")?30:str_eq(cmd,"oem adsp-scm-stage")?2:0;
+                int ok=ready && marble_adsp_owned_cycle((const void *)(uintptr_t)PAYLOAD_BASE,marble_payload_bytes,0,profile);
+                marble_icb_progress=marble_xo_rpmh_progress=NULL;marble_pil_progress=NULL;
+                if(!marble_icb_attempted)print("marble-adsp-owned: refused clean=1 attempted=0 dirty=0\n");
+                fb_reply(ok?"OKAY":"FAIL","owned dependency ROM cycle; mandatory reset; see log");
+            }
+        }
+#endif /* !XNU_MARBLE_HELD_ONLY */
+#ifndef XNU_MARBLE_CONTROL_ONLY
+        else if (str_eq(cmd,"oem adsp-scm-held-stage")) {
+            if(busy || marble_thermal_latched || marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","fresh loader required");
+            else {
+                marble_icb_progress=marble_xo_rpmh_progress=marble_icb_usb_trace;marble_pil_progress=marble_pil_usb_trace;
+                int ready=marble_display_memory_info(SCREEN.base,(uint64_t)SCREEN.stride*SCREEN.height) && marble_scm_availability();
+                int ok=ready && marble_adsp_owned_cycle((const void *)(uintptr_t)PAYLOAD_BASE,marble_payload_bytes,0,62);
+                marble_icb_progress=marble_xo_rpmh_progress=NULL;marble_pil_progress=NULL;
+                if(!marble_icb_attempted)print("marble-adsp-owned: refused clean=1 attempted=0 dirty=0\n");
+                fb_reply(ok?"OKAY":"FAIL","held ON through PAS stop; OFF after; mandatory reset; see log");
+            }
+        }
+#endif
+#ifndef XNU_MARBLE_APPS_ONLY
+        else if (str_eq(cmd,"oem adsp-control-boot")) {
+            if(busy || marble_thermal_latched || marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","fresh loader required");
+            else {
+                marble_icb_progress=marble_xo_rpmh_progress=marble_icb_usb_trace;marble_pil_progress=marble_pil_usb_trace;
+                int ready=marble_display_memory_info(SCREEN.base,(uint64_t)SCREEN.stride*SCREEN.height) && marble_scm_availability();
+                int ok=ready && marble_adsp_owned_cycle((const void *)(uintptr_t)PAYLOAD_BASE,marble_payload_bytes,1,126);
+                marble_icb_progress=marble_xo_rpmh_progress=NULL;marble_pil_progress=NULL;
+                if(!marble_icb_attempted)print("marble-adsp-owned: refused clean=1 attempted=0 dirty=0\n");
+                fb_reply(ok?"OKAY":"FAIL","bounded DSP control-link stop/restore; no audio; mandatory reset");
+            }
+        }
+#endif
+#if defined(XNU_MARBLE_APPS_ONLY) || !defined(XNU_MARBLE_CONTROL_ONLY)
+#ifdef XNU_MARBLE_TDM_PCM_GRAPH_ONLY
+        else if (str_eq(cmd,"oem adsp-tdm-pcm-graph-cycle")) {
+#elif defined(XNU_MARBLE_TDM_RUN_ONLY)
+        else if (str_eq(cmd,"oem adsp-tdm-run-cycle")) {
+#elif defined(XNU_MARBLE_AUDIO_CLOCK_ONLY)
+        else if (str_eq(cmd,"oem adsp-audio-clock-cycle")) {
+#elif defined(XNU_MARBLE_TDM_CONFIG_ONLY)
+        else if (str_eq(cmd,"oem adsp-tdm-config-cycle")) {
+#elif defined(XNU_MARBLE_TDM_GRAPH_ONLY)
+        else if (str_eq(cmd,"oem adsp-tdm-graph-cycle")) {
+#elif defined(XNU_MARBLE_AMDB_LOAD_ONLY)
+        else if (str_eq(cmd,"oem adsp-amdb-load-cycle")) {
+#elif defined(XNU_MARBLE_AMDB_ONLY)
+        else if (str_eq(cmd,"oem adsp-amdb-info")) {
+#elif defined(XNU_MARBLE_GPR_ONLY)
+        else if (str_eq(cmd,"oem adsp-spf-state")) {
+#else
+        else if (str_eq(cmd,"oem adsp-apps-open")) {
+#endif
+            if(busy || marble_thermal_latched || marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","fresh loader required");
+            else {
+                marble_icb_progress=marble_xo_rpmh_progress=marble_icb_usb_trace;marble_pil_progress=marble_pil_usb_trace;
+                int ready=marble_display_memory_info(SCREEN.base,(uint64_t)SCREEN.stride*SCREEN.height) && marble_scm_availability();
+                int ok=ready && marble_adsp_owned_cycle((const void *)(uintptr_t)PAYLOAD_BASE,marble_payload_bytes,1,
+#ifdef XNU_MARBLE_GPR_ONLY
+                    510
+#else
+                    254
+#endif
+                );
+#ifdef XNU_MARBLE_AUDIO_USB_RAM_ONLY
+                print("aud-usb-policy: version=1 post_auth_RAM_only=1 INFO_suppressed=%d capture_enabled=0 thermal_unchanged=1 PAS_required=1 audio_acceptance=0\n",(uint64_t)marble_audio_usb_suppressed);
+#endif
+                marble_icb_progress=marble_xo_rpmh_progress=NULL;marble_pil_progress=NULL;
+                if(!marble_icb_attempted)print("marble-adsp-owned: refused clean=1 attempted=0 dirty=0\n");
+                fb_reply(ok?"OKAY":"FAIL","DSP; mandatory reset");
+            }
+        }
+#endif
+#endif /* !XNU_MARBLE_QMP_ONLY */
+#if !defined(XNU_MARBLE_QMP_ONLY) && !defined(XNU_MARBLE_HELD_ONLY)
+        else if (str_eq(cmd,"oem icb-run-scm-bandwidth-cycle")) {
+            if(busy || marble_thermal_latched || marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","fresh loader required");
+            else {
+                marble_icb_progress=marble_icb_usb_trace;
+                int ok=marble_icb_run_scm_bandwidth_cycle();marble_icb_progress=NULL;
+                if(!marble_icb_run_attempted)print("marble-icb-run: refused clean=1 attempted=0 dirty=0\n");
+                fb_reply(ok?"OKAY":"FAIL","SCM peak bandwidth request/release only; mandatory reset");
+            }
+        }
+#endif
+#if !defined(XNU_MARBLE_ICB_ONLY) && !defined(XNU_MARBLE_GLINK_ONLY) && !defined(XNU_MARBLE_HELD_ONLY)
+        else if (str_eq(cmd,"oem qmp-wire-cycle") || str_eq(cmd,"oem qmp-tpl-cycle") || str_eq(cmd,"oem qmp-smccc-cycle") || str_eq(cmd,"oem qmp-ipcc-cycle")) {
+            if(busy || marble_thermal_latched || marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","fresh loader required");
+            else {
+                marble_qmp_tpl_progress=marble_pil_usb_trace;
+                marble_smccc_progress=marble_pil_usb_trace;
+                int ok=str_eq(cmd,"oem qmp-ipcc-cycle")?marble_qmp_ipcc_cycle():str_eq(cmd,"oem qmp-smccc-cycle")?marble_qmp_smccc_cycle():str_eq(cmd,"oem qmp-tpl-cycle")?marble_qmp_tpl_cycle():marble_qmp_wire_cycle();
+                marble_qmp_tpl_progress=NULL;
+                marble_smccc_progress=NULL;
+                if(!marble_qmp_wire.attempted)print("marble-qmp-wire: refused clean=1 AP_writes=0 GLink_calls=0 PAS_calls=0 DSP_start=0\n");
+                fb_reply(ok?"OKAY":"FAIL","AP-owned QMP channel/message only; no GLink/PAS/DSP; cold reset required");
+            }
+        }
+        else if (str_eq(cmd,"oem qmp-load-state-cycle")) {
+            fb_reply("FAIL","v70 generic TX disabled: QMP has no remote intent advertisement");
+        }
+        else if (str_eq(cmd,"oem qmp-mailbox-load-state-cycle")) {
+            if(busy || marble_thermal_latched || marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","fresh loader required");
+            else {
+                int ok=marble_qmp_native_cycle(1,2,2);
+                if(!marble_qmp_native.attempted)print("marble-qmp-native: refused clean=1 attempted=0 raw_writes=0 TX_calls=0 NPA_calls=0 PAS_calls=0 DSP_start=0 storage_access=0\n");
+                fb_reply(ok?"OKAY":"FAIL","AOP load_state on/off and native close; no DSP; mandatory reset");
+            }
+        }
+#endif
+#ifndef XNU_MARBLE_OWNED_STAGE_ONLY
+        else if (str_eq(cmd,"oem buttons-probe")) {
+            if(busy || marble_cap.active || marble_cap.dirty)fb_reply("FAIL","requires clean idle loader");
+            else fb_reply(marble_buttons_probe()?"OKAY":"FAIL","PMIC observer read-only qualification");
+        }
+        else if (str_eq(cmd,"oem daily-info")) {
+            if(busy || marble_cap.active || marble_cap.dirty)fb_reply("FAIL","requires clean idle loader");
+            else {marble_daily_info();fb_reply("OKAY","read-only daily capability discovery");}
+        }
+        else if (str_eq(cmd,"oem qmp-native-cycle") || str_eq(cmd,"oem qmp-native-pump-cycle") || str_eq(cmd,"oem qmp-native-peer-close") || str_eq(cmd,"oem qmp-native-settled-close")) {
+            if(busy || marble_thermal_latched || marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","fresh loader required");
+            else {
+                unsigned peer=str_eq(cmd,"oem qmp-native-settled-close")?2:str_eq(cmd,"oem qmp-native-peer-close");
+                int ok=marble_qmp_native_cycle(peer || str_eq(cmd,"oem qmp-native-pump-cycle"),peer,0);
+                if(!marble_qmp_native.attempted)print("marble-qmp-native: refused clean=1 attempted=0 raw_writes=0 TX_calls=0 NPA_calls=0 PAS_calls=0 DSP_start=0 storage_access=0\n");
+                fb_reply(ok?"OKAY":"FAIL","native AOP channel open/close only; no TX or DSP; see log");
+            }
+        }
+        else if (str_eq(cmd,"oem rpmh-zero-cycle")) {
+            if(busy || marble_thermal_latched || marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","fresh loader required");
+            else {
+                int ok=marble_rpmh_zero_cycle();
+                if(!marble_rpmh_attempted)print("marble-rpmh-native: refused clean=1 attempted=0 dirty=0\n");
+                fb_reply(ok?"OKAY":"FAIL","zero-command native RPMh client lifecycle only; no clock lease or DSP");
+            }
+        }
+        else if (str_eq(cmd,"oem xo-rpmh-hold")) {
+            if(busy || marble_thermal_latched || marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","fresh loader required");
+            else {
+                marble_xo_rpmh_progress=marble_icb_usb_trace;
+                int ok=marble_xo_rpmh_hold();marble_xo_rpmh_progress=NULL;
+                if(!marble_xo_rpmh_attempted)print("marble-xo-rpmh: refused clean=1 attempted=0 dirty=0\n");
+                fb_reply(ok?"OKAY":"FAIL","XO ON hold only; votes retained; mandatory reset; see log");
+            }
+        }
+        else if (str_eq(cmd,"oem xo-npa-test")) {
+            if(busy || marble_thermal_latched || marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","fresh loader required");
+            else {
+                marble_xo_npa_progress=marble_icb_usb_trace;
+                int ok=marble_xo_npa_test();marble_xo_npa_progress=NULL;
+                if(!marble_xo_npa.attempted)print("marble-xo-npa: refused clean=1 attempted=0 dirty=0\n");
+                fb_reply(ok?"OKAY":"FAIL","software XO aggregation only; no hardware calls; cold reset required");
+            }
+        }
+        else if (str_eq(cmd,"oem adsp-dependency-cycle")) {
+            if(busy || marble_thermal_latched || marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","fresh loader required");
+            else {
+                marble_icb_progress=marble_xo_rpmh_progress=marble_icb_usb_trace;
+                int ok=marble_adsp_dependency_cycle();marble_icb_progress=marble_xo_rpmh_progress=NULL;
+                if(!marble_icb_attempted)print("marble-adsp-dependency: refused clean=1 attempted=0 dirty=0\n");
+                fb_reply(ok?"OKAY":"FAIL","simultaneous qualified dependencies only; no DSP; mandatory reset");
+            }
+        }
+        else if (str_eq(cmd,"oem icb-run-bandwidth-cycle")) {
+            if(busy || marble_thermal_latched || marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","fresh loader required");
+            else {
+                marble_icb_progress=marble_icb_usb_trace;
+                int ok=marble_icb_run_bandwidth_cycle();marble_icb_progress=NULL;
+                if(!marble_icb_run_attempted)print("marble-icb-run: refused clean=1 attempted=0 dirty=0\n");
+                fb_reply(ok?"OKAY":"FAIL","native ICB RUN then bandwidth request/release; mandatory reset");
+            }
+        }
+        else if (str_eq(cmd,"oem icb-run-cycle")) {
+            if(busy || marble_thermal_latched || marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","fresh loader required");
+            else {
+                marble_icb_progress=marble_icb_usb_trace;
+                int ok=marble_icb_run_cycle();marble_icb_progress=NULL;
+                if(!marble_icb_run_attempted)print("marble-icb-run: refused clean=1 attempted=0 dirty=0\n");
+                fb_reply(ok?"OKAY":"FAIL","published ICB post-init RUN transition; mandatory reset; see log");
+            }
+        }
+        else if (str_eq(cmd,"oem icb-bandwidth-cycle")) {
+            if(busy || marble_thermal_latched || marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","fresh loader required");
+            else {
+                marble_icb_progress=marble_icb_usb_trace;
+                int ok=marble_icb_bandwidth_cycle();marble_icb_progress=NULL;
+                if(!marble_icb_attempted)print("marble-icb-bw: refused clean=1 attempted=0 dirty=0\n");
+                fb_reply(ok?"OKAY":"FAIL","native 1MB/s crypto-DDR request/complete only; no DSP; see log");
+            }
+        }
+        else if (str_eq(cmd,"oem icb-zero-cycle")) {
+            if(busy || marble_thermal_latched || marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","fresh loader required");
+            else {
+                marble_icb_progress=marble_icb_usb_trace;
+                int ok=marble_icb_zero_cycle();marble_icb_progress=NULL;
+                if(!marble_icb_attempted)print("marble-icb-zero: refused clean=1 attempted=0 dirty=0\n");
+                fb_reply(ok?"OKAY":"FAIL","native zero-request ICB client only; no DSP or bandwidth lease");
+            }
+        }
+        else if (str_eq(cmd,"oem adsp-dependency-info")) {
+            if(busy || marble_thermal_latched || marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","requires clean isolated firmware loader");
+            else fb_reply(marble_adsp_dependency_inventory()?"OKAY":"FAIL","native dependency metadata; no clients, votes or DSP");
+        }
+        else if (str_eq(cmd,"oem adsp-icb-info")) {
+            if(busy || marble_thermal_latched || marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","requires clean isolated firmware loader");
+            else fb_reply(marble_adsp_icb_inventory()?"OKAY":"FAIL","native ICB route metadata only; no client or bandwidth votes");
+        }
+        else if (str_eq(cmd,"oem adsp-xo-info")) {
+            if(busy || marble_thermal_latched || marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","requires clean isolated firmware loader");
+            else fb_reply(marble_adsp_xo_inventory()?"OKAY":"FAIL","XO command DB qualification only; no votes or DSP start");
+        }
+        else if (str_eq(cmd,"oem adsp-power-info")) {
+            if(busy || marble_thermal_latched || marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","requires clean idle loader");
+            else fb_reply(marble_adsp_power_inventory()?"OKAY":"FAIL","read-only QMP and native resource inventory; no DSP start");
+        }
+#endif /* !XNU_MARBLE_OWNED_STAGE_ONLY */
+#endif /* !XNU_MARBLE_AUDIO_QUEUE_ONLY */
+#if !defined(XNU_MARBLE_ADSP_ONLY) || defined(XNU_MARBLE_AUDIO_OWNER)
+#ifndef XNU_MARBLE_AUDIO_QUEUE_ONLY
+        else if (str_eq(cmd,"oem scm-info")) {
+            if(busy || marble_cap.active || marble_cap.dirty || marble_thermal_latched ||
+               marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","requires clean idle loader");
+            else fb_reply(marble_scm_info()?"OKAY":"FAIL","exact resident SCM table inventory only; no protocol calls or SMC; see log");
+        }
+        else if (str_eq(cmd,"oem scm-availability")) {
+            if(busy || marble_cap.active || marble_cap.dirty || marble_thermal_latched ||
+               marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","requires clean idle loader");
+            else {
+                fb_reply("INFO","qualified modern SCM availability queries only; no PAS init/auth/reset");
+                fb_reply(marble_scm_availability()?"OKAY":"FAIL","SCM availability completed; see log; DSP not started");
+            }
+        }
+        else if (str_eq(cmd,"oem pil-install")) {
+            if(busy || marble_cap.active || marble_cap.dirty || marble_thermal_latched ||
+               marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","requires fresh clean idle loader");
+            else fb_reply(marble_pil_install((const uint8_t *)(uintptr_t)PAYLOAD_BASE,marble_payload_bytes)?"OKAY":"FAIL","native no-AUTO PIL installation only; reboot required; see log");
+        }
+        else if (str_eq(cmd,"oem pil-config")) {
+            if(busy || marble_cap.active || marble_cap.dirty || marble_thermal_latched ||
+               marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","requires fresh clean idle loader");
+            else fb_reply(marble_pil_config()?"OKAY":"FAIL","named PIL configuration copies only; no DSP start; see log");
+        }
+        else if (str_eq(cmd,"oem pil-adsp-cycle")) {
+            fb_reply("FAIL","disabled after v10b unverified reset; smaller stages required");
+        }
+        else if (str_eq(cmd,"oem pil-adsp-memory")) {
+            if(busy || marble_cap.active || marble_cap.dirty || marble_thermal_latched ||
+               marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","requires fresh clean idle loader");
+            else {
+                efi_status armed=BS->set_watchdog_timer(30,0,0,NULL);
+                if(EFI_ERROR(armed)) {fb_reply("FAIL","firmware watchdog unavailable");return;}
+                marble_pil_progress=marble_pil_usb_trace;
+                int ok=marble_pil_adsp_memory();marble_pil_progress=NULL;
+                efi_status cleared=BS->set_watchdog_timer(0,0,0,NULL);
+                fb_reply(ok && !EFI_ERROR(cleared)?"OKAY":"FAIL","reserved memory/translation gate only; no DSP start or payload reads");
+            }
+        }
+        else if (str_eq(cmd,"oem pil-file-probe") || str_eq(cmd,"oem pil-header-probe") || str_eq(cmd,"oem pil-elf-probe") || str_eq(cmd,"oem pil-pas-metadata") || str_eq(cmd,"oem pil-pas-memory") || str_eq(cmd,"oem pil-first-segment") || str_eq(cmd,"oem pil-all-segments")) {
+            if(busy || marble_cap.active || marble_cap.dirty || marble_thermal_latched ||
+               marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","requires fresh clean idle loader");
+            else {
+                marble_pil_progress=marble_pil_usb_trace;
+                unsigned stage=str_eq(cmd,"oem pil-all-segments")?7:(str_eq(cmd,"oem pil-first-segment")?6:(str_eq(cmd,"oem pil-pas-memory")?5:(str_eq(cmd,"oem pil-pas-metadata")?4:(str_eq(cmd,"oem pil-elf-probe")?3:(str_eq(cmd,"oem pil-header-probe")?2:0)))));
+                int ok=marble_pil_file_probe((const void *)(uintptr_t)PAYLOAD_BASE,marble_payload_bytes,stage);
+                marble_pil_progress=NULL;
+                fb_reply(ok?"OKAY":"FAIL",stage>=6?"qualified native segment load/readback/restore and PAS shutdown; no auth-reset or DSP execution":(stage>=4?"PAS metadata/memory setup and shutdown; no payload access, auth-reset or DSP execution":"native PIL RAM files/header only; PAS-init stub refuses; no DSP startup"));
+            }
+        }
+        else if (str_eq(cmd,"oem npa-votes")) {
+            fb_reply("FAIL","disabled after v29 original-state restoration failure; audit native release first");
+        }
+        else if (str_eq(cmd,"oem pil-bounded-boot") || str_eq(cmd,"oem pil-smp2p-boot") || str_eq(cmd,"oem pil-smp2p-reset-boot")) {
+            fb_reply("FAIL","DSP boot disabled pending marble power/AOP shutdown qualification");
+        }
+        else if (str_eq(cmd,"oem pil-powered-stage") || str_eq(cmd,"oem pil-smp2p-stage")) {
+            if(busy || marble_cap.active || marble_cap.dirty || marble_thermal_latched ||
+               marble_display_bus.active || marble_display_bus.dirty || !marble_pil_header_only ||
+               !marble_display_memory_qualified || marble_scm_available_mask!=15 || marble_pil_dsp_dirty)
+                fb_reply("FAIL","requires qualified fresh idle PAS-refusal loader, display and SCM gates");
+            else {
+                unsigned smp2p=str_eq(cmd,"oem pil-smp2p-stage");
+                int prepared=!smp2p || marble_smp2p_prepare(1);
+                marble_pil_progress=marble_pil_usb_trace;
+                marble_npa_held_action=marble_pil_powered_action;
+                int ok=prepared && marble_npa_client_cycle(2);
+                marble_npa_held_action=NULL;marble_pil_progress=NULL;
+                print("marble-npa-client-state: attempted=%d active=%d dirty=%d\n",(uint64_t)marble_npa_attempted,(uint64_t)marble_npa_active,(uint64_t)marble_npa_dirty);
+                if(smp2p)print("marble-smp2p-state: attempted=%d dirty=%d DSP_start=%d\n",(uint64_t)marble_smp2p_attempted,(uint64_t)marble_smp2p_dirty,(uint64_t)marble_pil_auth_attempted);
+                fb_reply(ok?"OKAY":"FAIL","powered ROM stage; stop before restore; mandatory cold reset; no DSP execution");
+            }
+        }
+        else if (str_eq(cmd,"oem npa-clients") || str_eq(cmd,"oem npa-native-release")) {
+            if(busy || marble_cap.active || marble_cap.dirty || marble_thermal_latched ||
+               marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","requires fresh clean idle loader");
+            else {
+                int ok=marble_npa_client_cycle(str_eq(cmd,"oem npa-native-release")?2:0);
+                print("marble-npa-client-state: attempted=%d active=%d dirty=%d\n",(uint64_t)marble_npa_attempted,(uint64_t)marble_npa_active,(uint64_t)marble_npa_dirty);
+                fb_reply(ok?"OKAY":"FAIL","bounded native NPA client/request lifecycle; see cleanup log; no DSP start");
+            }
+        }
+        else if (str_eq(cmd,"oem npa-vcs-info")) {
+            if(busy || marble_cap.active || marble_cap.dirty || marble_thermal_latched ||
+               marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","requires clean idle loader");
+            else fb_reply(marble_npa_vcs_info()?"OKAY":"FAIL","qualified VCS rail binding/cache/config reads only; no requests or physical voltage measurement");
+        }
+        else if (str_eq(cmd,"oem npa-info") || str_eq(cmd,"oem npa-resources")) {
+            if(busy || marble_cap.active || marble_cap.dirty || marble_thermal_latched ||
+               marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","requires clean idle loader");
+            else fb_reply((str_eq(cmd,"oem npa-resources")?marble_npa_resources():marble_npa_info())?"OKAY":"FAIL","exact resident NPA table/resource inventory; no protocol calls, votes or DSP start");
+        }
+        else if (str_eq(cmd,"oem pil-proxy-config")) {
+            if(busy || marble_cap.active || marble_cap.dirty || marble_thermal_latched ||
+               marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","requires fresh clean idle loader");
+            else {
+                efi_status armed=BS->set_watchdog_timer(30,0,0,NULL);
+                if(EFI_ERROR(armed)) {fb_reply("FAIL","firmware watchdog unavailable");return;}
+                int ok=marble_pil_proxy_config_info();
+                efi_status clear=BS->set_watchdog_timer(0,0,0,NULL);
+                fb_reply(ok && !EFI_ERROR(clear)?"OKAY":"FAIL","native proxy DT metadata only; no resource votes or DSP start");
+            }
+        }
+        else if (str_eq(cmd,"oem display-memory-info")) {
+            if(busy || marble_cap.active || marble_cap.dirty || marble_thermal_latched ||
+               marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","requires fresh clean idle loader");
+            else {
+                efi_status armed=BS->set_watchdog_timer(30,0,0,NULL);
+                if(EFI_ERROR(armed)) {fb_reply("FAIL","firmware watchdog unavailable");return;}
+                int ok=marble_display_memory_info(SCREEN.base,(uint64_t)SCREEN.stride*SCREEN.height);
+                efi_status clear=marble_display_bus.dirty?(EFI_ERROR_BIT|7):BS->set_watchdog_timer(0,0,0,NULL);
+                fb_reply(ok && !EFI_ERROR(clear)?"OKAY":"FAIL","display DMA/Demura register audit only; no payload access or display reconfiguration");
+            }
+        }
+        else if (str_eq(cmd,"oem adc-channels") || str_eq(cmd,"oem adc-battery")) {
+            if(busy || marble_cap.active || marble_cap.dirty || marble_thermal_latched ||
+               marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","requires fresh clean idle loader");
+            else fb_reply(marble_adc_channels(str_eq(cmd,"oem adc-battery"))?"OKAY":"FAIL","ADC lookup or bounded two-channel battery read; no initialization or charger changes; see log");
+        }
+        else if (str_eq(cmd,"oem smem-probe")) {
+            fb_reply("FAIL","raw SMEM reads disabled after hardware reset");
+        }
+        else if (str_eq(cmd,"oem glink-probe")) {
+            if(busy || marble_cap.active || marble_cap.dirty || marble_thermal_latched ||
+               marble_display_bus.active || marble_display_bus.dirty)
+                fb_reply("FAIL","requires fresh clean idle loader");
+            else fb_reply(marble_glink_probe()?"OKAY":"FAIL","local link observer lifecycle; no channel opens or DSP start; see log");
+        }
+        else if (str_eq(cmd,"oem smem-info") || str_eq(cmd,"oem smem-channels")) {
+            if(busy || marble_cap.active || marble_cap.dirty)fb_reply("FAIL","requires clean idle loader");
+            else fb_reply(marble_smem_info(str_eq(cmd,"oem smem-channels"))?"OKAY":"FAIL","initialized firmware SMEM lookup: see oem log");
+        }
+        else if (str_eq(cmd,"oem display-info") || str_eq(cmd,"oem display-clocks")) {
+            if(busy || marble_cap.active || marble_cap.dirty)fb_reply("FAIL","requires idle loader");
+            else {marble_display_info(str_eq(cmd,"oem display-clocks"));fb_reply("OKAY","firmware discovery: no DPU reads");}
+        }
+        else if (str_eq(cmd,"oem display-counter-probe")) {
+            if(busy || marble_cap.active || marble_cap.dirty || marble_display_bus.dirty)
+                fb_reply("FAIL","requires clean idle loader");
+            else fb_reply(marble_display_counter_probe(0)?"OKAY":"FAIL","clock lease and DSI counters: see oem log");
+        }
+        else if (str_eq(cmd,"oem dsi-info")) {
+            if(busy || marble_cap.active || marble_cap.dirty || marble_display_bus.dirty)
+                fb_reply("FAIL","requires clean idle loader");
+            else fb_reply(marble_dsi_info()?"OKAY":"FAIL","DSI status only, no panel commands: see oem log");
+        }
+        else if (str_eq(cmd,"oem brightness-dim") || str_eq(cmd,"oem brightness-restore")) {
+            if(!busy || marble_cap.dirty || marble_display_bus.dirty || marble_thermal_latched)
+                fb_reply("FAIL","requires running kernel and qualified display lease");
+            else fb_reply(marble_brightness_runtime(str_eq(cmd,"oem brightness-restore"))?"OKAY":"FAIL",
+                          "bounded runtime brightness lease; see oem log");
+        }
+        else if (str_eq(cmd,"oem dsi-dim-probe")) {
+            if(busy || marble_cap.active || marble_cap.dirty || marble_display_bus.dirty || marble_thermal_latched)
+                fb_reply("FAIL","requires clean idle loader");
+            else fb_reply(marble_dsi_dim_probe()?"OKAY":"FAIL","bounded brightness reduction/readback/restore; see oem log");
+        }
+        else if (str_eq(cmd,"oem dsi-read-identity")) {
+            if(busy || marble_cap.active || marble_cap.dirty || marble_display_bus.dirty || marble_thermal_latched)
+                fb_reply("FAIL","requires clean idle loader");
+            else fb_reply(marble_dsi_identity_probe()?"OKAY":"FAIL","bounded DCS identity/brightness reads; see oem log");
+        }
+        else if (str_eq(cmd,"oem dsi-read-power")) {
+            if(busy || marble_cap.active || marble_cap.dirty || marble_display_bus.dirty || marble_thermal_latched)
+                fb_reply("FAIL","requires clean idle loader");
+            else fb_reply(marble_dsi_power_probe()?"OKAY":"FAIL","bounded DCS power-mode read; see oem log");
+        }
+        else if (str_eq(cmd,"oem vblank-probe")) {
+            if(busy || marble_cap.active || marble_cap.dirty)fb_reply("FAIL","requires idle loader");
+            else fb_reply(marble_vblank_probe()?"OKAY":"FAIL","read-only DSI timing counters: see oem log");
+        }
+        else if (starts_with(cmd,"oem button-test ")) {
+            fb_reply(marble_button_test(cmd+16,busy)?"OKAY":"FAIL","volatile HID regression event");
+        }
+        else if (starts_with(cmd, "oem touch-test ")) {
+            fb_reply(mt_test_event(cmd+15,busy) ? "OKAY" : "FAIL", "volatile regression event");
+        }
+        else if (starts_with(cmd, "oem touch-gesture ")) {
+            fb_reply(mt_gesture_start(cmd+18,busy)?"OKAY":"FAIL","bounded device-clock regression gesture");
+        }
+        else if (str_eq(cmd, "oem touch-probe")) {
+            if (busy) fb_reply("FAIL", "probe requires an idle kernel");
+            else fb_reply(mt_probe() ? "OKAY" : "FAIL", "touch probe: see oem log");
+        }
+#endif /* !XNU_MARBLE_AUDIO_QUEUE_ONLY */
+		else if (str_eq(cmd,"oem thermal-probe") || str_eq(cmd,"oem thermal-short-probe") || str_eq(cmd,"oem thermal-gpu-preview-probe")) {
+			if (busy) fb_reply("FAIL","probe requires an idle kernel");
+			else {
+				static const uint64_t addresses[]={0xc222000,0xc222004,0xc2630e4,0xc263014,0xc2630a4,0xc2630d8,
+				    0xc223000,0xc223004,0xc2650e4,0xc265014,0xc2650a4};
+				for (unsigned i=0;i<sizeof(addresses)/sizeof(addresses[0]);i++) {
+					uint32_t value=0;marble_thermal_read(NULL,addresses[i],&value);
+					print("marble-thermal: raw address=%x value=%x\n",addresses[i],(uint64_t)value);
+				}
+				unsigned saved_short=marble_short_thermal_requested;
+				unsigned saved_preview=marble_gpu_preview_requested;
+				marble_short_thermal_requested=str_eq(cmd,"oem thermal-short-probe");
+				marble_gpu_preview_requested=str_eq(cmd,"oem thermal-gpu-preview-probe");
+				int ok=marble_thermal_check(1) && !marble_thermal_latched;
+				marble_short_thermal_requested=saved_short;
+				marble_gpu_preview_requested=saved_preview;
+				fb_reply(ok?"OKAY":"FAIL","read-only TSENS probe: see oem log");
+			}
+		}
+		else if(str_eq(cmd,"oem cpucap-probe")) {
+			if(busy || marble_cap.active || marble_cap.dirty)fb_reply("FAIL","requires clean idle loader");
+			else {
+				int ok=marble_cpucap_prepare(marble_thermal_read,NULL,&marble_cap);
+				marble_cap_log("readonly-plan",ok);
+				for(unsigned d=0;d<2;d++)for(unsigned row=0;row<21;row++) {
+					uint32_t word=0;
+					marble_thermal_read(NULL,marble_cpucap_base(d)+0x100+row*4,&word);
+					print("marble-cpucap-lut: domain=%d row=%d word=%x khz=%d cores=%d\n",
+					    (uint64_t)(d+1),(uint64_t)row,(uint64_t)word,
+					    (uint64_t)marble_cpucap_khz(word),(uint64_t)((word>>16)&7));
+				}
+				fb_reply(ok?"OKAY":"FAIL","read-only CPU request plan: see oem log");
+			}
+		}
+#endif /* !XNU_MARBLE_ADSP_ONLY */
+#endif
+        else if (starts_with(cmd, "oem stop")) {
 			/* the kernel looks at this once a second and comes back as it does when its time is up */
 			if (busy) {
 				((struct kernel_live *)(uintptr_t)running_live)->stop = 1;
@@ -3618,15 +5169,604 @@ fb_command(char *cmd)
 			fb_reply("OKAY", "");
 		} else if (starts_with(cmd, "getvar:")) {
 			const char *var = cmd + 7;
+#ifdef XNU_MARBLE_CONTROL_ONLY
+            /* This isolated profile exposes only the protocol needed for its
+             * RAM package, bounded lifecycle, logging and recovery. */
+            if(str_eq(var,"product"))fb_reply("OKAY","xnuloader");
+            else if(str_eq(var,"platform"))fb_reply("OKAY",PLAT->name);
+            else if(str_eq(var,"storage-policy"))fb_reply("OKAY","ram-only-no-block-io");
+#ifdef XNU_MARBLE_AUDIO_OWNER
+            else if(str_eq(var,"marble-firmware-only"))fb_reply("OKAY","0");
+            else if(str_eq(var,"marble-source-kernel"))fb_reply("OKAY","gic-dt-stride-v1");
+            else if(str_eq(var,"marble-audio-queue"))fb_reply("OKAY","locked-RAM4096-static18-noDSP-v1");
+            else if(str_eq(var,"marble-cpucap"))fb_reply("OKAY","big-prime-restore-1p2ghz-v2");
+            else if(str_eq(var,"marble-thermal"))fb_reply("OKAY","tsens-v2-stop-55c-v1");
+            else if(str_eq(var,"marble-efi-idle"))fb_reply("OKAY","event-stream-500us-v2");
+            else if(str_eq(var,"marble-efi-idle-ready"))fb_reply("OKAY",marble_idle_qualified?"yes":"no");
+            else if(str_eq(var,"marble-thermal-short"))fb_reply("OKAY","short18-die50-10s-hard55-v1");
+#else
+            else if(str_eq(var,"marble-firmware-only"))fb_reply("OKAY","1");
+#endif
+            else if(str_eq(var,"marble-gpu-preview"))fb_reply("OKAY","gpu90-die50-60s-hard55-v2");
+#ifdef XNU_MARBLE_I2C_ONLY
+            else if(str_eq(var,"marble-i2c-inventory"))fb_reply("OKAY","Mu-I2C-table-code-readonly-v1");
+            else if(str_eq(var,"marble-i2c-dt-info"))fb_reply("OKAY","Mu-DT-provider-table-only-v1");
+            else if(str_eq(var,"marble-i2c-config-snapshot"))fb_reply("OKAY","RAM-DT-41865-capture-only-v2");
+            else if(str_eq(var,"marble-i2c-clock-info"))fb_reply("OKAY","QUP2-five-clock-ID-readonly-v1");
+            else if(str_eq(var,"marble-i2c-clock-cycle"))fb_reply("OKAY","QUP2-five-clock-balanced-1ms-v3");
+            else if(str_eq(var,"marble-i2c-register-info"))fb_reply("OKAY","QUP2-eight-passive-RO-twice-v1");
+            else if(str_eq(var,"marble-i2c-route-info"))fb_reply("OKAY","QUP2-41-route-words-passive-v1");
+            else if(str_eq(var,"marble-i2c-setup-cycle"))fb_reply("OKAY","QUP2-100kHz-config-restore-no-transaction-v1");
+            else if(str_eq(var,"marble-i2c-amp-id"))fb_reply("OKAY","QUP2-two-AW2032-ID-only-bounded-v5");
+#ifdef XNU_MARBLE_AMP_REGISTERS_ONLY
+#ifdef XNU_MARBLE_AMP_QUIET_ONLY
+#ifdef XNU_MARBLE_AMP_PROFILE_ONLY
+            else if(str_eq(var,"marble-i2c-amp-profile"))fb_reply("OKAY","AW2032-ROM-Music-OTP-down-muted-readback-reset-v1");
+#endif
+            else if(str_eq(var,"marble-i2c-amp-quiet"))fb_reply("OKAY","AW2032-90dB-HMUTE-write-readback-reset-v1");
+#endif
+            else if(str_eq(var,"marble-i2c-amp-registers"))fb_reply("OKAY","AW2032-reset-readonly-registers-v1");
+#endif
+#else
+            else if(str_eq(var,"marble-adsp-control-boot"))fb_reply("OKAY","SCM-held-poll-GLINK-SMP2P-stop-v4");
+#ifdef XNU_MARBLE_TDM_PCM_GRAPH_ONLY
+            else if(str_eq(var,"marble-adsp-tdm-pcm-graph-cycle")) {
+#ifdef XNU_MARBLE_AUDIO_MFC
+                fb_reply("OKAY","TDM608-MFC48to96-noBUF1");
+#else
+                fb_reply("OKAY","TDM528-PCM-noBUF1");
+#endif
+            }
+#ifdef XNU_MARBLE_AUDIO_DMA_INVENTORY
+            else if(str_eq(var,"marble-audio-dma-info"))fb_reply("OKAY","APPS-SID1801-RO1");
+#ifdef XNU_MARBLE_AUDIO_CONTEXT_INVENTORY
+            else if(str_eq(var,"marble-audio-context-info"))fb_reply("OKAY","APPS-CB-RO1");
+#ifdef XNU_MARBLE_AUDIO_MAP_PROBE
+            else if(str_eq(var,"marble-audio-map-cycle"))fb_reply("OKAY","APPS-CB-ECATS-RESTORE2");
+#ifdef XNU_MARBLE_PCM_MEMORY_ONLY
+            else if(str_eq(var,"marble-pcm-memory-cycle"))fb_reply("OKAY","APM-MAP44-UNMAP28-v1");
+#ifdef XNU_MARBLE_PCM_DATA_ONLY
+            else if(str_eq(var,"marble-pcm-data-cycle"))fb_reply("OKAY","APM-WREP-ZERO4096-v1");
+#ifdef XNU_MARBLE_TDM_PINS_ONLY
+#ifdef XNU_MARBLE_AUDIO_I2C_HOLD
+#ifdef XNU_MARBLE_AUDIO_I2C_WINDOW
+#ifdef XNU_MARBLE_QUP_CORE_KEEPALIVE
+            else if(str_eq(var,"marble-qup-core-keepalive"))fb_reply("OKAY","QUP2-minimum-AMC-WAKE-retained-v1");
+#ifdef XNU_MARBLE_AUDIO_RUNTIME_DEADLINE
+            else if(str_eq(var,"marble-audio-runtime-deadline"))fb_reply("OKAY","DSP-500ms-deadline-I2C-inclusive-v1");
+#ifdef XNU_MARBLE_AUDIO_DIGITAL_PLL
+            else if(str_eq(var,"marble-audio-digital-pll"))fb_reply("OKAY","AW2032-PWDN-only-PLL-20ms-AMPPD-HMUTE-v1");
+#ifdef XNU_MARBLE_AUDIO_QUIET_PROGRESS
+            else if(str_eq(var,"marble-audio-quiet-progress"))fb_reply("OKAY","typed-RAM-log-no-repetitive-USB-INFO-v1");
+#ifdef XNU_MARBLE_AUDIO_RUNTIME_600MS
+            else if(str_eq(var,"marble-audio-runtime-600ms"))fb_reply("OKAY","digital600ms-six-thermal-samples-v1");
+#endif
+#endif
+#ifdef XNU_MARBLE_AUDIO_DIGITAL_EARLY_STOP
+            else if(str_eq(var,"marble-audio-digital-early-stop"))fb_reply("OKAY","PLL-typed-complete-before-idle-STOP-v1");
+#ifdef XNU_MARBLE_AUDIO_FAST_STOP
+            else if(str_eq(var,"marble-audio-fast-stop"))fb_reply("OKAY","STOP100us-5s-thermal100ms-ACK-required-v1");
+#ifdef XNU_MARBLE_AUDIO_USB_RAM_ONLY
+            else if(str_eq(var,"marble-audio-usb-ram-only"))fb_reply("OKAY","post-auth-RAM-noUSB-INFO-v1");
+#ifdef XNU_MARBLE_AUDIO_MUTED_ANALOG
+            else if(str_eq(var,"marble-audio-muted-analog"))fb_reply("OKAY","AMPPD-cycle-HMUTE90dB-10x1ms-v1");
+#ifdef XNU_MARBLE_AUDIO_PCM_REPEAT
+#ifdef XNU_MARBLE_AUDIO_NATIVE_ENDPOINT
+            else if(str_eq(var,"marble-audio-native-endpoint"))fb_reply("OKAY","EFI-owner-XNU-endpoint-MFC-zero2-proof-v2");
+#endif
+#ifdef XNU_MARBLE_AUDIO_OWNER
+#ifdef XNU_MARBLE_AUDIO_BOARD_HELD
+#ifdef XNU_MARBLE_AUDIO_OWNER_STREAM
+            else if(str_eq(var,"marble-audio-board-held"))fb_reply("OKAY","PCM24-v2-HMUTE-DRAIN-QUIET-before-STOP");
+#else
+            else if(str_eq(var,"marble-audio-board-held"))fb_reply("OKAY","PCM8-HMUTE-DRAIN-QUIET-before-STOP-v1");
+#endif
+#if defined(XNU_MARBLE_AUDIO_OWNER_REFILL) || defined(XNU_MARBLE_AUDIO_OWNER_STREAM)
+#ifdef XNU_MARBLE_AUDIO_OWNER_REFILL
+            else if(str_eq(var,"marble-audio-refill"))fb_reply("OKAY","PCM8-live-producer-gap1-readonly-status-v1");
+#else
+            else if(str_eq(var,"marble-audio-run-log"))fb_reply("OKAY",
+#ifdef XNU_MARBLE_AUDIO_FAST_HANDSHAKE
+                "blocking-result-log-v1"
+#else
+                ""
+#endif
+            );
+            else if(str_eq(var,"marble-audio-owner-stream"))fb_reply("OKAY","STREAM24-v2-128ms-wrap4096-600ms-diagnostic");
+#endif
+#ifdef XNU_MARBLE_AUDIO_QMP_CLOSE_SNAPSHOT
+            else if(str_eq(var,"marble-audio-qmp-close"))fb_reply("OKAY","coherent2-unchanged-codec-750ms-v1");
+#ifdef XNU_MARBLE_AUDIO_OWNER_NATIVE_LINK
+            else if(str_eq(var,"marble-audio-link-owner"))fb_reply("OKAY","XNU-only-no-EFI-observer-v1");
+#endif
+#endif
+#endif
+#endif
+            else if(str_eq(var,"marble-audio-owner")) {
+#ifdef XNU_MARBLE_AUDIO_OWNER_STREAM
+                fb_reply("OKAY","XNU-FIFO-EFI-resources-PCM24-v2-muted-ACK-before-free");
+#elif defined(XNU_MARBLE_AUDIO_OWNER_PCM)
+                fb_reply("OKAY","XNU-FIFO-EFI-resources-PCM8-muted-ACK-before-free-v1");
+#else
+                fb_reply("OKAY",MARBLE_AUDIO_OWNER_PERIODS==8?"XNU-FIFO-EFI-resources-zero8-ACK-before-free-v1":"XNU-FIFO-EFI-resources-zero2-ACK-before-free-v1");
+#endif
+            }
+#endif
+            else if(str_eq(var,"marble-audio-pcm-repeat")) {
+#if XNU_MARBLE_AUDIO_PCM_PERIODS == 8
+                fb_reply("OKAY","WREP8-tokens-serial4K-reuse-after-DONE-TX-v1");
+#else
+                fb_reply("OKAY","WREP2-tokens-serial4K-reuse-after-DONE-TX-v1");
+#endif
+            }
+#ifdef XNU_MARBLE_AUDIO_PAS_TIMING
+            else if(str_eq(var,"marble-audio-pas-timing"))fb_reply("OKAY","RAM-perSMC-time-original1s128-v1");
+#endif
+#endif
+#endif
+#endif
+#endif
+#endif
+#ifdef XNU_MARBLE_AUDIO_DIGITAL_CAPTURE
+            else if(str_eq(var,"marble-audio-digital-capture"))fb_reply("OKAY","PLL-inband-hex-beforeSTOP-watchdog-reset-v2");
+#endif
+#endif
+#endif
+#ifdef XNU_MARBLE_AUDIO_QUP_HOLD
+            else if(str_eq(var,"marble-audio-qup-hold"))fb_reply("OKAY","QUP2-extra-refs-afterSTART-untilPAS-v1");
+#endif
+#ifdef XNU_MARBLE_AUDIO_AMP_PROFILE
+#ifdef XNU_MARBLE_AUDIO_AMP_PRESTART
+#ifdef XNU_MARBLE_AUDIO_AMP_PREBOOT
+            else if(str_eq(var,"marble-audio-amp-preboot"))fb_reply("OKAY","AW2032-Music-before-auth-down-muted-v1");
+#endif
+            else if(str_eq(var,"marble-audio-amp-prestart"))fb_reply("OKAY","AW2032-Music-before-START-down-muted-v1");
+#ifdef XNU_MARBLE_AUDIO_AMP_DIRECT_WAIT
+            else if(str_eq(var,"marble-audio-amp-direct-wait"))fb_reply("OKAY","CNTVCT-500ms-same-thermal-IRQ-unchanged-v1");
+#endif
+#endif
+            else if(str_eq(var,"marble-audio-amp-profile"))fb_reply("OKAY","AW2032-Music-after-START-down-muted-v1");
+#endif
+#endif
+            else if(str_eq(var,"marble-audio-i2c-window"))fb_reply("OKAY","QUP2-afterSTART-late-clockID-noamp-v2");
+#endif
+            else if(str_eq(var,"marble-audio-i2c-hold"))fb_reply("OKAY","QUP2-config-clocks-across-PCM-noamp-v1");
+#endif
+            else if(str_eq(var,"marble-tdm-pins-cycle"))fb_reply("OKAY","CAPE-TDM4-RESTORE-v1");
+#endif
+#endif
+#endif
+#endif
+#endif
+#endif
+#elif defined(XNU_MARBLE_TDM_RUN_ONLY)
+            else if(str_eq(var,"marble-adsp-tdm-run-cycle"))fb_reply("OKAY","TDM432-run-v1");
+#elif defined(XNU_MARBLE_AUDIO_CLOCK_ONLY)
+            else if(str_eq(var,"marble-adsp-audio-clock-cycle"))fb_reply("OKAY","PRM204-12288k-lease-v1");
+#elif defined(XNU_MARBLE_TDM_CONFIG_ONLY)
+            else if(str_eq(var,"marble-adsp-tdm-config-cycle"))fb_reply("OKAY","TDMcfg-noSTART1");
+#elif defined(XNU_MARBLE_TDM_GRAPH_ONLY)
+            else if(str_eq(var,"marble-adsp-tdm-graph-cycle"))fb_reply("OKAY","GPR-one-disconnected-TDM-open-close-v1");
+#elif defined(XNU_MARBLE_AMDB_LOAD_ONLY)
+            else if(str_eq(var,"marble-adsp-amdb-load-cycle")) {
+#ifdef XNU_MARBLE_AMDB_MFC
+                fb_reply("OKAY","GPR-AMDB-one-MFC-load-unload-v1");
+#else
+                fb_reply("OKAY","GPR-AMDB-one-TDM-load-unload-v1");
+#endif
+            }
+#elif defined(XNU_MARBLE_AMDB_ONLY)
+            else if(str_eq(var,"marble-adsp-amdb-info")) {
+#ifdef XNU_MARBLE_AMDB_MFC
+                fb_reply("OKAY","GPR-AMDB-one-MFC-metadata-query-v1");
+#else
+                fb_reply("OKAY","GPR-AMDB-one-TDM-metadata-query-v1");
+#endif
+            }
+#elif defined(XNU_MARBLE_GPR_ONLY)
+            else if(str_eq(var,"marble-adsp-spf-state"))fb_reply("OKAY","GPR-SPF-readonly-one-query-v1");
+#else
+            else if(str_eq(var,"marble-adsp-apps-open"))fb_reply("OKAY","lpass-adsp-apps-intents512-noDATA-v2");
+#endif
+            else if(str_eq(var,"marble-qmp-wire-preserved"))fb_reply("OKAY",marble_qmp_wire_preserved()?"1":"0");
+#endif
+            else if(str_eq(var,"version"))fb_reply("OKAY","0.5");
+            else if(str_eq(var,"max-download-size"))fb_reply("OKAY",download_to_ramdisk?"0xffffffff":"0x03f00000");
+            else if(str_eq(var,"result"))fb_reply("OKAY",last_result);
+            else fb_reply("OKAY","");
+#else
+
 			if (str_eq(var, "product")) {
 				fb_reply("OKAY", "xnuloader");
-			} else if (str_eq(var, "version")) {
+			} else if (str_eq(var, "platform")) {
+				fb_reply("OKAY", PLAT->name);
+			} else if (str_eq(var, "storage-policy")) {
+#ifdef XNU_MARBLE
+				fb_reply("OKAY", "ram-only-no-block-io");
+#else
+				fb_reply("OKAY", "standard");
+#endif
+
+#ifndef XNU_MARBLE_CONTROL_ONLY
+			} else if (str_eq(var, "marble-display-test")) {
+				fb_reply("OKAY", "clock-record-v1");
+			} else if (str_eq(var,"marble-display-timing")) {
+#ifdef XNU_MARBLE
+				fb_reply("OKAY","firmware-ahb-lease-counter-v2");
+#else
+				fb_reply("OKAY","");
+#endif
+			} else if(str_eq(var,"marble-efi-idle")) {
+#ifdef XNU_MARBLE
+				fb_reply("OKAY","event-stream-500us-v2");
+#else
+				fb_reply("OKAY","");
+#endif
+			} else if(str_eq(var,"marble-thermal-short")) {
+#ifdef XNU_MARBLE
+				fb_reply("OKAY","short18-die50-10s-hard55-v1");
+#else
+				fb_reply("OKAY","");
+#endif
+			} else if(str_eq(var,"marble-render-scale")) {
+#ifdef XNU_MARBLE
+				fb_reply("OKAY", "2x-preview-v1");
+#else
+				fb_reply("OKAY", "");
+#endif
+			} else if(str_eq(var,"marble-host-clock")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY","epoch-2020-2099-v1");
+#else
+                fb_reply("OKAY","");
+#endif
+			} else if(str_eq(var,"marble-brightness")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY","ram-dcs-readback-restore-v1");
+#else
+                fb_reply("OKAY","");
+#endif
+			} else if(str_eq(var,"marble-buttons")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY","observer-v7-mailbox-v2");
+#else
+                fb_reply("OKAY","");
+#endif
+			} else if(str_eq(var,"marble-gpu-manual-preview")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY","manual600-die50-60s-hard55-v1");
+#else
+                fb_reply("OKAY","");
+#endif
+#endif /* UI capabilities omitted from control image */
+			} else if(str_eq(var,"marble-gpu-preview")) {
+#ifdef XNU_MARBLE
+				fb_reply("OKAY","gpu90-die50-60s-hard55-v2");
+#else
+				fb_reply("OKAY","");
+#endif
+			} else if(str_eq(var,"marble-efi-idle-ready")) {
+#ifdef XNU_MARBLE
+				fb_reply("OKAY",marble_idle_qualified && !marble_idle.failed && !marble_idle.dirty ? "yes" : "no");
+#else
+				fb_reply("OKAY","no");
+#endif
+			} else if(str_eq(var,"marble-cpucap")) {
+#ifdef XNU_MARBLE
+				fb_reply("OKAY","big-prime-restore-1p2ghz-v2");
+#else
+				fb_reply("OKAY","");
+#endif
+			} else if (str_eq(var, "marble-thermal")) {
+#ifdef XNU_MARBLE
+				fb_reply("OKAY","tsens-v2-stop-55c-v1");
+#else
+				fb_reply("OKAY","");
+#endif
+
+#ifndef XNU_MARBLE_CONTROL_ONLY
+			} else if (str_eq(var, "marble-snapshot")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "completed-composition-mutex-v3-own-ram");
+#else
+                fb_reply("OKAY", "");
+#endif
+			} else if (str_eq(var, "marble-pil-smp2p-boot")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "disabled-after-v38-stop-unverified");
+#else
+                fb_reply("OKAY", "");
+#endif
+			} else if (str_eq(var, "marble-pil-smp2p-reset-boot")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "disabled-pending-power-AOP-qualification");
+#else
+                fb_reply("OKAY", "");
+#endif
+			} else if (str_eq(var, "marble-pil-smp2p-stage")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "smp2p-notify-powered-noexec-reset-v1");
+#else
+                fb_reply("OKAY", "");
+#endif
+			} else if (str_eq(var, "marble-smp2p-notify")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "one-adsp-kick-no-start-v1");
+#else
+                fb_reply("OKAY", "");
+#endif
+			} else if (str_eq(var, "marble-smp2p")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "owned-init-noipcc-reset-v1");
+#else
+                fb_reply("OKAY", "");
+#endif
+            } else if (str_eq(var, "marble-qmp-load-state")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "disabled-v70-missing-remote-intent");
+#else
+                fb_reply("OKAY", "");
+#endif
+            } else if (str_eq(var, "marble-qmp-mailbox-load-state")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "transport64-on-off-ack-close-reset-v1");
+#else
+                fb_reply("OKAY", "");
+#endif
+            } else if (str_eq(var, "marble-adsp-owned-boot")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "disabled-v69-PAS-shutdown");
+#else
+                fb_reply("OKAY", "");
+#endif
+            } else if (str_eq(var, "marble-adsp-owned-stage")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "package-noexec-run-xo-lpi-bw-v1");
+#else
+                fb_reply("OKAY", "");
+#endif
+            } else if (str_eq(var, "marble-qmp-wire")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "linux-owned-channel64-ack-wire-v2");
+#else
+                fb_reply("OKAY", "");
+#endif
+            } else if (str_eq(var, "marble-adsp-scm-qmp-stage")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "disabled-v78c-PAS-cleanup");
+#else
+                fb_reply("OKAY", "");
+#endif
+            } else if (str_eq(var, "marble-adsp-scm-stage")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "linux-SCM-peak-ROM-noexec-v1");
+#else
+                fb_reply("OKAY", "");
+#endif
+            } else if (str_eq(var, "marble-adsp-scm-wire-stage")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "disabled-v82-PAS-cleanup");
+#else
+                fb_reply("OKAY", "");
+#endif
+            } else if (str_eq(var, "marble-adsp-scm-channel-stage")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "disabled-v83-PAS-cleanup");
+#else
+                fb_reply("OKAY", "");
+#endif
+            } else if (str_eq(var, "marble-qmp-tpl")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "native-TPL8-roundtrip-noSMC-v1");
+#else
+                fb_reply("OKAY", "");
+#endif
+            } else if (str_eq(var, "marble-qmp-smccc")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "bounded-register-query-noPAS-v1");
+#else
+                fb_reply("OKAY", "");
+#endif
+            } else if (str_eq(var, "marble-adsp-scm-bounded-stage")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "disabled-v86-INTERRUPTED-limit");
+#else
+                fb_reply("OKAY", "");
+#endif
+            } else if (str_eq(var, "marble-qmp-ipcc")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "AP-own-QMP-receive-clear-v1");
+#else
+                fb_reply("OKAY", "");
+#endif
+            } else if (str_eq(var, "marble-adsp-scm-ipcc-stage")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "SCM-ROM-IRQ-ack-bounded-stop-v1");
+#else
+                fb_reply("OKAY", "");
+#endif
+            } else if (str_eq(var, "marble-adsp-scm-held-stage")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "SCM-ROM-loadstate-on-through-stop-v1");
+#else
+                fb_reply("OKAY", "");
+#endif
+#endif /* unrelated capabilities */
+            } else if (str_eq(var, "marble-qmp-wire-preserved")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", marble_qmp_wire_preserved()?"1":"0");
+#else
+                fb_reply("OKAY", "0");
+#endif
+            } else if (str_eq(var, "marble-adsp-control-boot")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "SCM-held-poll-GLINK-SMP2P-stop-v4");
+#else
+                fb_reply("OKAY", "");
+#endif
+
+#ifndef XNU_MARBLE_CONTROL_ONLY
+            } else if (str_eq(var, "marble-glink-smem-info")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "preallocated-lpass-GET-only-v1");
+#else
+                fb_reply("OKAY", "");
+#endif
+            } else if (str_eq(var, "marble-icb-scm-peak")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "linux-U32max-kBps-owned10ms-reset-v1");
+#else
+                fb_reply("OKAY", "");
+#endif
+            } else if (str_eq(var, "marble-adsp-qmp-stage")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "disabled-v75-PAS-cleanup");
+#else
+                fb_reply("OKAY", "");
+#endif
+#endif /* unrelated capability queries */
+			} else if (str_eq(var, "marble-firmware-only")) {
+#ifdef XNU_MARBLE_FIRMWARE_ONLY
+                fb_reply("OKAY", "1");
+#else
+                fb_reply("OKAY", "0");
+#endif
+
+#ifndef XNU_MARBLE_CONTROL_ONLY
+			} else if (str_eq(var, "marble-pil-powered")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "held-load-stop-restore-reset-v1");
+#else
+                fb_reply("OKAY", "");
+#endif
+			} else if (str_eq(var, "marble-pil-boot")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "disabled-after-v34b-stop-unverified");
+#else
+                fb_reply("OKAY", "");
+#endif
+			} else if (str_eq(var, "marble-npa-release")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "native-off-reset-v1");
+#else
+                fb_reply("OKAY", "");
+#endif
+			} else if (str_eq(var, "marble-touch-gesture")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "device-clock-v1");
+#else
+                fb_reply("OKAY", "");
+#endif
+			} else if (str_eq(var, "marble-touch-test")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "mailbox-v1");
+#else
+                fb_reply("OKAY", "");
+#endif
+			} else if (str_eq(var, "marble-smp")) {
+#ifdef XNU_MARBLE
+				fb_reply("OKAY", "big-cores-1,2,4-gic256k-v1");
+#else
+				fb_reply("OKAY", "");
+#endif
+			} else if (str_eq(var, "marble-audio-transport")) {
+#if defined(XNU_MARBLE) && defined(XNU_MARBLE_AUDIO_QUEUE_ONLY)
+				fb_reply("OKAY","SMEM-readonly-native18-v1");
+#else
+				fb_reply("OKAY","");
+#endif
+			} else if (str_eq(var, "marble-audio-queue")) {
+#if defined(XNU_MARBLE) && defined(XNU_MARBLE_AUDIO_QUEUE_ONLY)
+				fb_reply("OKAY", "locked-RAM4096-static18-noDSP-v1");
+#else
+				fb_reply("OKAY", "");
+#endif
+			} else if (str_eq(var, "marble-source-kernel")) {
+#ifdef XNU_MARBLE
+				fb_reply("OKAY", "gic-dt-stride-v1");
+#else
+				fb_reply("OKAY", "");
+#endif
+			} else if (str_eq(var, "marble-gpu-preflight")) {
+#ifdef XNU_MARBLE
+				fb_reply("OKAY", "readonly-v1");
+#else
+				fb_reply("OKAY", "");
+#endif
+			} else if (str_eq(var, "marble-gpu-power")) {
+#ifdef XNU_MARBLE
+				fb_reply("OKAY", "cx-restore-v1");
+#else
+				fb_reply("OKAY", "");
+#endif
+			} else if (str_eq(var, "marble-gpu-context")) {
+#ifdef XNU_MARBLE
+				fb_reply("OKAY", "cb0-ats-release-v2");
+#else
+				fb_reply("OKAY", "");
+#endif
+			} else if (str_eq(var, "marble-gpu-tbu")) {
+#ifdef XNU_MARBLE
+				fb_reply("OKAY", "gfx0-v1");
+#else
+				fb_reply("OKAY", "");
+#endif
+			} else if (str_eq(var, "marble-gpu-memory")) {
+#ifdef XNU_MARBLE
+				fb_reply("OKAY", "six-ranges-v1");
+#else
+				fb_reply("OKAY", "");
+#endif
+			} else if (str_eq(var, "marble-gpu-tcm")) {
+#ifdef XNU_MARBLE
+				fb_reply("OKAY", "restore-v1");
+#else
+				fb_reply("OKAY", "");
+#endif
+			} else if (str_eq(var, "marble-gpu-resources")) {
+#ifdef XNU_MARBLE
+				fb_reply("OKAY", "log-hfi-v1");
+#else
+				fb_reply("OKAY", "");
+#endif
+			} else if (str_eq(var, "marble-gmu-preflight")) {
+#ifdef XNU_MARBLE
+				fb_reply("OKAY", "clocks-cmddb-readonly-v1");
+#else
+				fb_reply("OKAY", "");
+#endif
+			} else if (str_eq(var, "marble-gmu-votes")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "gen7-cpu-tables-v1");
+#else
+                fb_reply("OKAY", "");
+#endif
+             } else if (str_eq(var, "marble-gmu-clocks")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "gpll0-restore-v1");
+#else
+                fb_reply("OKAY", "");
+#endif
+#endif /* unrelated capability queries */
+            } else if (str_eq(var, "version")) {
 				fb_reply("OKAY", "0.5");
 			} else if (str_eq(var, "max-download-size")) {
 				fb_reply("OKAY", download_to_ramdisk ? "0xffffffff" : "0x03f00000");
 			} else if (str_eq(var, "result")) {
 				fb_reply("OKAY", last_result);
-			} else if (str_eq(var, "screen") && SCREEN.base != 0) {
+            } else if (str_eq(var, "marble-gmu-boot")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "fw-init-reset-drain-v1");
+#else
+                fb_reply("OKAY", "");
+#endif
+			} else if (str_eq(var, "marble-gmu-rpmh")) {
+#ifdef XNU_MARBLE
+                fb_reply("OKAY", "arc-read-restore-v1");
+#else
+                fb_reply("OKAY", "");
+#endif
+            } else if (str_eq(var, "screen") && SCREEN.base != 0) {
 				/* width height bytes-per-row */
 				uint32_t mark = log_len;
 				print("%d %d %d", (uint64_t)SCREEN.width, (uint64_t)SCREEN.height, (uint64_t)SCREEN.stride);
@@ -3636,6 +5776,9 @@ fb_command(char *cmd)
 			} else {
 				fb_reply("OKAY", "");
 			}
+#endif /* profile capability interface */
+
+#ifndef XNU_MARBLE_CONTROL_ONLY
 		} else if (starts_with(cmd, "oem ramdisk")) {
 			/* "oem ramdisk": the next download is a root image for the resident area; "oem ramdisk none" drops it */
 			struct payload_info pi;
@@ -3653,6 +5796,8 @@ fb_command(char *cmd)
 			}
 			download_to_ramdisk = 1;
 			fb_reply("OKAY", "");
+
+#endif /* desktop-only command omitted */
 		} else if (starts_with(cmd, "download:")) {
 			uint64_t total = parse_number(cmd + 9, 16), got = 0;
 			uint64_t limit = PAYLOAD_MAX_SIZE - 0x100000;
@@ -3669,6 +5814,9 @@ fb_command(char *cmd)
 				fb_reply("FAIL", "bad size");
 				return;
 			}
+#ifdef XNU_MARBLE
+			if (!to_ramdisk) marble_payload_bytes = 0;
+#endif
 			fb_reply_data(total);
 			while (got < total) {
 				uint64_t want = total - got > USB_CHUNK ? USB_CHUNK : total - got;
@@ -3683,6 +5831,9 @@ fb_command(char *cmd)
 				if (to_ramdisk) {
 					resident_rd_size = total;
 				}
+#ifdef XNU_MARBLE
+				else marble_payload_bytes = total;
+#endif
 				fb_reply("OKAY", "");
 			} else {
 				fb_reply("FAIL", "short download");
@@ -3698,14 +5849,52 @@ fb_command(char *cmd)
 				sent += chunk;
 			}
 			fb_reply("OKAY", "");
+
+#ifndef XNU_MARBLE_CONTROL_ONLY
 		} else if (starts_with(cmd, "oem screenshot")) {
 			/* stage the raw framebuffer; "getvar screen" gives its geometry */
 			if (SCREEN.base == 0) {
 				fb_reply("FAIL", "no display");
 				return;
 			}
+			uint64_t bytes=(uint64_t)SCREEN.stride*SCREEN.height;
+#ifdef XNU_MARBLE
+			if(bytes>MARBLE_SNAPSHOT_BYTES) {fb_reply("FAIL","snapshot geometry too large");return;}
+			int valid=0;uint64_t requested=0,sequence=0;
+			if(busy) {
+				flush_dcache((uint64_t)(uintptr_t)marble_scanout,(uint64_t)(uintptr_t)marble_scanout+64);
+				if(marble_scanout->ready==2) {
+					/* Kernel's lock covers composition/power changes and this copy.
+					 * Separate cache-line ownership avoids writing back a stale ack. */
+					requested=marble_scanout->request+1;
+					marble_scanout->request=requested;
+					clean_dcache((uint64_t)(uintptr_t)marble_scanout+64,(uint64_t)(uintptr_t)marble_scanout+128);
+					uint64_t until=READ_SYSREG(CNTVCT_EL0)+READ_SYSREG(CNTFRQ_EL0)/2;
+					while(READ_SYSREG(CNTVCT_EL0)<until) {
+						flush_dcache((uint64_t)(uintptr_t)marble_scanout,(uint64_t)(uintptr_t)marble_scanout+64);
+						if(marble_snapshot_complete(requested,marble_scanout->completed,marble_scanout->bytes,bytes)) {
+							sequence=marble_scanout->captured_sequence;
+							uint64_t pa=marble_scanout->output_pa;
+							if(!(sequence&1) && pa>=win_base && bytes<=win_size && pa-win_base<=win_size-bytes) {
+								marble_snapshot_pa=pa;valid=1;
+								flush_dcache(marble_snapshot_pa,marble_snapshot_pa+bytes);
+							}
+							break;
+						}
+						BS->stall(200);
+					}
+				}
+			} else {
+				fb_reply("FAIL","snapshots require running source kernel");return;
+			}
+			print("marble-snapshot: PASS=%d request=%d sequence=%d bytes=%d kernel_mutex=%d private_staging=1\n",
+			      (uint64_t)valid,requested,sequence,bytes,(uint64_t)busy);
+			if(!valid) {fb_reply("FAIL","no stable scanout snapshot; not streamed");return;}
+			staged_data=(const char *)(uintptr_t)marble_snapshot_pa;
+#else
 			staged_data = (const char *)(uintptr_t)SCREEN.base;
-			staged_len = (uint64_t)SCREEN.stride * SCREEN.height;
+#endif
+			staged_len = bytes;
 			fb_reply("OKAY", "");
 		} else if (starts_with(cmd, "oem recording")) {
 			/* stage what the kernel's display driver recorded (boot-arg rec_secs) */
@@ -3725,11 +5914,15 @@ fb_command(char *cmd)
 			staged_data = sound_data;
 			staged_len = sound_len;
 			fb_reply("OKAY", "");
+
+#endif /* desktop-only command omitted */
 		} else if (starts_with(cmd, "oem clearscreen")) {
 			if (SCREEN.base != 0) {
 				memset((void *)(uintptr_t)SCREEN.base, 0, (size_t)SCREEN.stride * SCREEN.height);
 			}
 			fb_reply("OKAY", "");
+
+#if !defined(XNU_MARBLE_CONTROL_ONLY) || defined(XNU_MARBLE_AUDIO_OWNER)
 		} else if (starts_with(cmd, "oem run") || starts_with(cmd, "oem selftest")) {
 			int selftest = starts_with(cmd, "oem selftest");
 			const char *arg = cmd + 7;
@@ -3740,13 +5933,40 @@ fb_command(char *cmd)
 			uint64_t cp = selftest ? CHECKPOINT_SELFTEST : parse_number(arg, 10);
 
 			set_result("running", cp, 0);
+#ifdef XNU_MARBLE_AUDIO_OWNER_PREAUTH_TRACE
+            marble_audio_owner_trace_active=1;
+#endif
+#ifndef XNU_MARBLE_AUDIO_OWNER_BOARD
 			fb_reply("OKAY", "");
+#endif
 			log_len = 0;
 			print("== XNULOADER run (usb) ==\n");
 			if (!run_kernel(have_cp, cp)) {
 				set_result("not-started", 0, 0);
 				compose_logs(NULL, 0);
 			}
+#ifdef XNU_MARBLE_AUDIO_OWNER_PREAUTH_TRACE
+            marble_audio_owner_trace_active=0;
+#endif
+#ifdef XNU_MARBLE_AUDIO_OWNER_BOARD
+            /* Keep the command open through the nested native I2C/clock
+             * lifecycle. No subsequent getvar may be pending while that
+             * firmware path services its own events. No post-AUTH INFO. */
+#ifdef XNU_MARBLE_AUDIO_FAST_HANDSHAKE
+            char completion[96]="audio-run-result=";
+            memcpy(completion+sizeof("audio-run-result=")-1,last_result,str_len(last_result)+1);
+            fb_reply("INFO",completion);
+            fb_reply("INFO",marble_audio_owner_last_phase);
+            uint64_t flags=marble_audio_native.attempted | ((uint64_t)marble_audio_native.failed<<1) |
+                ((uint64_t)marble_audio_native.active<<2) | ((uint64_t)marble_audio_owner_core.launched<<3) |
+                ((uint64_t)marble_qmp_hold.on_acked<<4) | ((uint64_t)marble_pil_auth_attempted<<5) |
+                ((uint64_t)marble_pil_dsp_dirty<<6);
+            loader_format_result(completion,sizeof(completion),"audio-final-flags-ADC",flags,(uint64_t)marble_adc_last_temperature);
+            fb_reply("INFO",completion);
+            fb_reply("INFO",marble_audio_owner_first_failure);
+#endif
+            fb_reply("OKAY", "");
+#endif
 		} else if (starts_with(cmd, "oem hang")) {
 			fb_reply("OKAY", "watchdog test: not petting any more");
 			for (;;) {
@@ -3755,11 +5975,20 @@ fb_command(char *cmd)
 			/* the firmware's memory map into the log (then "oem log" and fetch it) */
 			print_memory_map();
 			fb_reply("OKAY", "");
+
+#endif /* desktop-only command omitted */
 		} else if (starts_with(cmd, "oem log")) {
 			if (busy) {
 				compose_live_log(running_live, running_slide);
 			} else {
+#ifdef XNU_MARBLE
+                /* A host may observe running just before the kernel returns.
+                 * Preserve the finished log when its next live request arrives. */
+                if (!starts_with(last_result, "returned ")) compose_logs(NULL, 0);
+                else { staged_data=out_buf;staged_len=composed_log_len; }
+#else
 				compose_logs(NULL, 0);
+#endif
 			}
 			fb_reply("OKAY", "");
 		} else if (starts_with(cmd, "reboot") || starts_with(cmd, "oem reboot")) {
@@ -3819,7 +6048,7 @@ usb_command_loop(void)
 		int64_t n;
 
 		if (!usb_connected) {
-			usb_wait(0xff); /* returns on the next cable state change */
+			usb_wait(0xff,1); /* returns on the next cable state change */
 			continue;
 		}
 		n = usb_rx(usb_rx_buf, 511);
@@ -3926,13 +6155,57 @@ efi_main(efi_handle image, efi_system_table *st)
 	ST = st;
 	BS = st->bs;
 	IMAGE = image;
+#ifdef XNU_MARBLE_LOG_FORMAT_PACK
+	if(!marble_format_prepare())return 0x8000000000000001ULL;
+#endif
 
 	BS->set_watchdog_timer(0, 0, 0, NULL);
 	print("== XNULOADER v3 ==\n");
 	print("CurrentEL=%x MIDR=%x MMFR0=%x CNTFRQ=%d image=%x\n", READ_SYSREG(CurrentEL) >> 2, READ_SYSREG(MIDR_EL1),
 	    READ_SYSREG(ID_AA64MMFR0_EL1), READ_SYSREG(CNTFRQ_EL0), (uint64_t)(uintptr_t)&__ImageBase);
 
+#ifdef XNU_MARBLE
+	PLAT = &platform_marble;
+	/* Allocate before choose_window(): only conventional pages may enter XNU. */
+	efi_status shared_status=BS->allocate_pages(AllocateAnyPages,EfiLoaderData,8,&marble_cap_allocation);
+	if(EFI_ERROR(shared_status)) {
+		print("marble-cpucap: shared allocation failed %x\n",shared_status);
+		return shared_status;
+	}
+	uint64_t shared_pa=(marble_cap_allocation+0x3fffULL)&~0x3fffULL;
+	if(!shared_pa || (shared_pa&0x3fff) || shared_pa<marble_cap_allocation ||
+	    shared_pa+0x4000>marble_cap_allocation+0x8000) {
+		print("marble-cpucap: invalid reserved shared mapping\n");
+		return EFI_ERROR_BIT|2;
+	}
+	marble_cap_mailbox=(struct marble_cap_shared *)(uintptr_t)shared_pa;
+	memset(marble_cap_mailbox,0,0x4000);
+	marble_scanout=(MarbleScanoutShared *)(uintptr_t)(shared_pa+64);
+	print("marble-cpucap: mailbox reserved PASS=1 allocation=%x pages=8 pa=%x mapping=4000\n",
+	    marble_cap_allocation,shared_pa);
+	/* Claim the whole USB payload/panic-log area before choosing XNU's RAM window. */
+	efi_status allocation = BS->allocate_pages(AllocateAnyPages, EfiLoaderData,
+	    PAYLOAD_MAX_SIZE >> 12, &marble_payload_base);
+	if (EFI_ERROR(allocation)) {
+		print("marble: payload allocation failed %x\n", allocation);
+		return allocation;
+	}
+	memset((void *)(uintptr_t)PAYLOAD_BASE, 0, 72);
+	struct payload_header *initial = (void *)(uintptr_t)PAYLOAD_BASE;
+	initial->magic = PAYLOAD_MAGIC;
+	initial->size = 64;
+	struct payload_entry *usb_entry = (void *)(initial + 1);
+	memcpy(usb_entry->name, "usb", 4);
+	usb_entry->size = 2;
+	memcpy(usb_entry + 1, "1", 2);
+	marble_payload_bytes = 72;
+	print("marble: RAM-only payload at %x, reserved %x bytes\n", PAYLOAD_BASE, PAYLOAD_MAX_SIZE);
+#ifndef XNU_MARBLE_PCM_MEMORY_ONLY
+	print_memory_map();
+#endif
+#else
 	PLAT = &platform_qemu_virt;
+#endif
 	if (EFI_ERROR(BS->locate_protocol(&gop_guid, NULL, (void **)&GOP)) || GOP->mode == NULL ||
 	    GOP->mode->info == NULL || GOP->mode->fb_base == 0) {
 		GOP = NULL;                     /* no display (QEMU without -device ramfb) */
@@ -3941,11 +6214,21 @@ efi_main(efi_handle image, efi_system_table *st)
 		SCREEN.width = GOP->mode->info->width;
 		SCREEN.height = GOP->mode->info->height;
 		SCREEN.stride = GOP->mode->info->pixels_per_scanline * 4;
+#ifdef XNU_MARBLE
+		/* Pixels must match the existing XNU 32-bit BGR framebuffer console. */
+		if (GOP->mode->info->pixel_format != 1 || SCREEN.width != 1080 || SCREEN.height != 2400 ||
+		    SCREEN.stride < SCREEN.width * 4 || GOP->mode->fb_size < SCREEN.stride * SCREEN.height) {
+			print("marble: unsupported GOP format %d / geometry; kernel display disabled\n",
+			    (uint64_t)GOP->mode->info->pixel_format);
+			SCREEN.base = 0;
+		}
+#else
 		for (unsigned i = 0; i < sizeof(platforms) / sizeof(platforms[0]); i++)
 			if (platforms[i]->fb_base == SCREEN.base)
 				PLAT = platforms[i];
 		if (PLAT == &platform_qemu_virt)
 			ramfb_phone_screen();
+#endif
 		print("display %d x %d at %x\n", (uint64_t)SCREEN.width, (uint64_t)SCREEN.height, SCREEN.base);
 	}
 	print("platform %s\n", PLAT->name);
@@ -3953,11 +6236,22 @@ efi_main(efi_handle image, efi_system_table *st)
 	install_exception_hook();
 	wdt_arm();
 
-	int have_payload = parse_payload(&pi, 0);
+#ifdef XNU_MARBLE_PCM_MEMORY_ONLY
+    /* Dedicated firmware image always enters its bounded USB controller.
+     * XNU is refused by run_kernel; no kernel payload parser is needed. */
+    int have_payload=1;memset(&pi,0,sizeof(pi));pi.usb_mode=1;
+#else
+    int have_payload = parse_payload(&pi, 0);
+#endif
 	if (have_payload && pi.usb_mode && usb_start()) {
 		flush_log();
 		usb_command_loop();
 	}
+#ifdef XNU_MARBLE
+	/* Keep diagnostics visible if USB is unavailable; do not reboot-loop. */
+	print("marble: USB command channel stopped or unavailable; returning to firmware\n");
+	return EFI_ERROR_BIT | 7;
+#endif
 
 	/* One-shot mode: run the kernel that came with the image, then reset. */
 	if (have_payload) {

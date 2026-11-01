@@ -65,7 +65,7 @@ diff --git a/bsd/conf/files b/bsd/conf/files
 index 44274016a4cf..9cd24b42caca 100644
 --- a/bsd/conf/files
 +++ b/bsd/conf/files
-@@ -109,6 +109,37 @@ bsd/dev/munge.c 			optional config_requires_u32_munging
+@@ -109,6 +109,50 @@ bsd/dev/munge.c 			optional config_requires_u32_munging
  bsd/dev/unix_startup.c			standard
  
  bsd/dev/monotonic.c optional monotonic
@@ -81,6 +81,19 @@ index 44274016a4cf..9cd24b42caca 100644
 +bsd/dev/redwood_apple80211.c	standard
 +bsd/dev/redwood_cpufreq.c	standard
 +bsd/dev/redwood_adreno.c	standard
++bsd/dev/marble_adreno.c	standard
++bsd/dev/marble_smmu.c	standard
++bsd/dev/marble_gpu/upstream/AdrenoPM4.c	standard
++bsd/dev/marble_gpu/upstream/AdrenoFirmware.c	standard
++bsd/dev/marble_gpu/upstream/AdrenoHfi.c	standard
++bsd/dev/marble_gpu/upstream/AdrenoHfiStartup.c	standard
++bsd/dev/marble_gpu/upstream/AdrenoHfiVotes.c	standard
++bsd/dev/marble_gpu/upstream/ArmSmmu4K.c	standard
++bsd/dev/marble_gpu/upstream/ArmSmmu4KContext.c	standard
++bsd/dev/marble_gpu/upstream/ArmSmmu4KProgram.c	standard
++bsd/dev/marble_gpu/upstream/ArmSmmu4KStreams.c	standard
++bsd/dev/marble_gpu/upstream/ArmSmmu4KAudit.c	standard
++bsd/dev/marble_gpu/upstream/ArmSmmu4KLive.c	standard
 +bsd/dev/redwood_audio.c		standard
 +bsd/dev/redwood_virtio_sound.c	standard
 +bsd/dev/redwood_speaker.c	standard

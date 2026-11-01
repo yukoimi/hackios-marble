@@ -1,0 +1,169 @@
+{
+  "pattern": "triangle1k-stream24-gap",
+  "frames": 5888,
+  "rate": 48000,
+  "bits": 16,
+  "channels": 2,
+  "raw_peak": 504,
+  "guard": "original",
+  "HPF": true,
+  "extra_divisor": 16,
+  "peak_bound": 64,
+  "pages": [
+    {
+      "period": 0,
+      "peak": 33,
+      "nonzero": 496,
+      "hash": "89519d77"
+    },
+    {
+      "period": 1,
+      "peak": 30,
+      "nonzero": 501,
+      "hash": "b20378ef"
+    },
+    {
+      "period": 2,
+      "peak": 0,
+      "nonzero": 0,
+      "hash": "76efddc5"
+    },
+    {
+      "period": 3,
+      "peak": 30,
+      "nonzero": 501,
+      "hash": "c99436e3"
+    },
+    {
+      "period": 4,
+      "peak": 30,
+      "nonzero": 502,
+      "hash": "cb53b870"
+    },
+    {
+      "period": 5,
+      "peak": 30,
+      "nonzero": 501,
+      "hash": "bbe8b6a6"
+    },
+    {
+      "period": 6,
+      "peak": 30,
+      "nonzero": 501,
+      "hash": "c99436e3"
+    },
+    {
+      "period": 7,
+      "peak": 30,
+      "nonzero": 502,
+      "hash": "cb53b870"
+    },
+    {
+      "period": 8,
+      "peak": 30,
+      "nonzero": 501,
+      "hash": "bbe8b6a6"
+    },
+    {
+      "period": 9,
+      "peak": 30,
+      "nonzero": 501,
+      "hash": "c99436e3"
+    },
+    {
+      "period": 10,
+      "peak": 30,
+      "nonzero": 502,
+      "hash": "cb53b870"
+    },
+    {
+      "period": 11,
+      "peak": 30,
+      "nonzero": 501,
+      "hash": "bbe8b6a6"
+    },
+    {
+      "period": 12,
+      "peak": 30,
+      "nonzero": 501,
+      "hash": "c99436e3"
+    },
+    {
+      "period": 13,
+      "peak": 30,
+      "nonzero": 502,
+      "hash": "cb53b870"
+    },
+    {
+      "period": 14,
+      "peak": 30,
+      "nonzero": 501,
+      "hash": "bbe8b6a6"
+    },
+    {
+      "period": 15,
+      "peak": 30,
+      "nonzero": 501,
+      "hash": "c99436e3"
+    },
+    {
+      "period": 16,
+      "peak": 30,
+      "nonzero": 502,
+      "hash": "cb53b870"
+    },
+    {
+      "period": 17,
+      "peak": 30,
+      "nonzero": 501,
+      "hash": "bbe8b6a6"
+    },
+    {
+      "period": 18,
+      "peak": 30,
+      "nonzero": 501,
+      "hash": "c99436e3"
+    },
+    {
+      "period": 19,
+      "peak": 30,
+      "nonzero": 502,
+      "hash": "cb53b870"
+    },
+    {
+      "period": 20,
+      "peak": 30,
+      "nonzero": 501,
+      "hash": "bbe8b6a6"
+    },
+    {
+      "period": 21,
+      "peak": 30,
+      "nonzero": 501,
+      "hash": "c99436e3"
+    },
+    {
+      "period": 22,
+      "peak": 30,
+      "nonzero": 502,
+      "hash": "cb53b870"
+    },
+    {
+      "period": 23,
+      "peak": 30,
+      "nonzero": 501,
+      "hash": "bbe8b6a6"
+    }
+  ],
+  "hardware_verified": false,
+  "audible": false,
+  "output_frames": 6144,
+  "silent_periods": [
+    2
+  ],
+  "prebuffer_frames": 512,
+  "late_frames": 5376,
+  "periods": 24,
+  "producer_writes": 19,
+  "max_queue_frames": 2048
+}

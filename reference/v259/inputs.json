@@ -1,0 +1,13 @@
+{
+  "scope": "Externally obtained inputs; no images or proprietary firmware included",
+  "ios": "iOS 16.5 / 20F66",
+  "xnu_commit": "c54f35ca767986246321eb901baf8f5ff7923f6a",
+  "Mu-marble.img_sha256": "77733522406161dd0c621b204d34e2b42b377f71e6474dfe4a928e3eefc5c328",
+  "reference_vendor_ROM_sha256": "1f79e3854f5b68f43c30273eb6f94a4023f7651148e25f3c488538b7b9d2f65a",
+  "MADSP001_dependencies_bytes": 30180144,
+  "MADSP001_dependencies_sha256": "ce5a2ee6534ea6fe4e5d2272252989854a3e0277893f49c87d63376458f7d237",
+  "historical_v259_boot_sha256": "3f1f45c3e2eaaee18f4354a4ae4fdb4ff8180906856ae0d440e7970f1414765f",
+  "historical_v259_kernel_sha256": "1d3bf5af38032c6d6d9a93562e58d223422b3751520e7dfa7c9dcac2217e75dd",
+  "historical_v241_boot_sha256": "2a1b950c0adb19978d0482e11561bd936862170381080620488b08d1cd257501",
+  "note": "These hashes identify original local artifacts, not artifacts uploaded here. Public source includes text/path redaction and separate newer diagnostic code."
+}

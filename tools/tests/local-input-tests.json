@@ -1,0 +1,202 @@
+{
+  "test_marble_amdb_cycle_report.Controller.test_real_controller_dispatch_recovery_and_reset": {
+    "required_file": "out/adsp-owned-package-v1-plan/dependencies.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_amdb_report.Controller.test_exchange_requires_independent_reset_and_metadata": {
+    "required_file": "out/adsp-owned-package-v1-plan/dependencies.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_audio_analog_report.AnalogReport.test_exact_muted_lifecycle": {
+    "required_file": "out/audio-route-v103-plan/rom-aw882xx-acf.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_audio_analog_report.AnalogReport.test_faults_restore_mute_counts_and_timing_rejected": {
+    "required_file": "out/audio-route-v103-plan/rom-aw882xx-acf.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_audio_analog_report.AnalogReport.test_missing_and_duplicate_analog_evidence_rejected": {
+    "required_file": "out/audio-route-v103-plan/rom-aw882xx-acf.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_audio_analog_report.AnalogReport.test_source_binding": {
+    "required_file": "out/audio-route-v103-plan/rom-aw882xx-acf.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_audio_capture.Capture.test_exact_digital_records_and_no_PAS_claim": {
+    "required_file": "out/audio-route-v103-plan/rom-aw882xx-acf.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_audio_capture.Capture.test_unmute_missing_reset_and_PLL_failure_rejected": {
+    "required_file": "out/audio-route-v103-plan/rom-aw882xx-acf.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_audio_clock_report.Controller.test_real_controller_and_reset_required": {
+    "required_file": "out/adsp-owned-package-v1-plan/dependencies.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_audio_dma_report.Dma.test_controller_requires_read_only_audit_and_reset": {
+    "required_file": "out/adsp-owned-package-v1-plan/dependencies.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_audio_pins_report.Pins.test_bound_real_cape_and_runtime_fdt": {
+    "required_file": "out/audio-tdm-pins-v148-audit/pinctrl-cape.h",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_audio_pins_report.Pins.test_controller_and_failed_recovery": {
+    "required_file": "out/adsp-owned-package-v1-plan/dependencies.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_audio_runtime_contract.Runtime.test_budget_pll_mute_and_ownership_mutations": {
+    "required_file": "out/audio-route-v103-plan/rom-aw882xx-acf.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_audio_runtime_contract.Runtime.test_explicit_600_not_relabelled_as500": {
+    "required_file": "out/audio-route-v103-plan/rom-aw882xx-acf.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_audio_runtime_contract.Runtime.test_typed_complete_budget_and_variable_final_thermal": {
+    "required_file": "out/audio-route-v103-plan/rom-aw882xx-acf.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_aw_digital.DigitalBoard.test_changed_oem_bit_or_poll_count_rejected": {
+    "required_file": "out/audio-route-v103-plan/rom-aw882xx-acf.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_aw_digital.DigitalBoard.test_exact_oem_registers_and_safe_rom_values": {
+    "required_file": "out/audio-route-v103-plan/rom-aw882xx-acf.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_aw_profile.Profile.test_changed_pinned_input_is_rejected": {
+    "required_file": "out/audio-route-v103-plan/rom-aw882xx-acf.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_aw_profile.Profile.test_pinned_board_source_and_generated_table": {
+    "required_file": "out/audio-route-v103-plan/rom-aw882xx-acf.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_efi_pack.Chain.test_real_decoder_sha_pe_and_firmware_abi": {
+    "required_file": "out/daily-adsp-pcm-data-v146-plan/loader-marble.efi",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_efi_pack.Chain.test_real_lzma_decoder_sha_pe_and_firmware_abi": {
+    "required_file": "out/daily-adsp-pcm-data-v146-plan/loader-marble.efi",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_i2c_inventory_report.Inventory.test_actual_runtime_deadline": {
+    "required_file": "out/audio-route-v103-plan/rom-aw882xx-acf.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_i2c_inventory_report.Inventory.test_amp_profile_controller_and_recovery": {
+    "required_file": "out/audio-route-v103-plan/rom-aw882xx-acf.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_i2c_inventory_report.Inventory.test_amp_profile_lifecycle": {
+    "required_file": "out/audio-route-v103-plan/rom-aw882xx-acf.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_i2c_inventory_report.Inventory.test_audio_amp_profile_after_START_and_reset_before_release": {
+    "required_file": "out/audio-route-v103-plan/rom-aw882xx-acf.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_i2c_inventory_report.Inventory.test_audio_amp_profile_preboot_order": {
+    "required_file": "out/audio-route-v103-plan/rom-aw882xx-acf.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_i2c_inventory_report.Inventory.test_audio_amp_profile_prestart_order": {
+    "required_file": "out/audio-route-v103-plan/rom-aw882xx-acf.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_i2c_inventory_report.Inventory.test_digital_PLL_bounded_writes_restoration_and_reset": {
+    "required_file": "out/audio-route-v103-plan/rom-aw882xx-acf.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_i2c_inventory_report.Inventory.test_extra_QUP_refs_after_START_until_PAS": {
+    "required_file": "out/audio-route-v103-plan/rom-aw882xx-acf.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_image.ImageTests.test_packaged_disks_and_firmware_checksums": {
+    "required_file": "out/marble-userspace-boot.img",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_pcm_data_report.Data.test_controller_recovery": {
+    "required_file": "out/adsp-owned-package-v1-plan/dependencies.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_pcm_memory_report.Memory.test_controller": {
+    "required_file": "out/adsp-owned-package-v1-plan/dependencies.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_pcm_repeat_report.RepeatReport.test_changed_identity_reuse_fault_and_geometry_rejected": {
+    "required_file": "out/audio-route-v103-plan/rom-aw882xx-acf.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_pcm_repeat_report.RepeatReport.test_eight_requests_require_explicit_count_and_complete_lifecycle": {
+    "required_file": "out/audio-route-v103-plan/rom-aw882xx-acf.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_pcm_repeat_report.RepeatReport.test_mfc_format_is_explicit_and_preserves_4k_mapping": {
+    "required_file": "out/audio-route-v103-plan/rom-aw882xx-acf.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_pcm_repeat_report.RepeatReport.test_missing_or_duplicate_typed_records_rejected": {
+    "required_file": "out/audio-route-v103-plan/rom-aw882xx-acf.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_pcm_repeat_report.RepeatReport.test_two_requests_and_owned_lifecycle": {
+    "required_file": "out/audio-route-v103-plan/rom-aw882xx-acf.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_qup_board.Qup.test_actual_vendor_board_and_minimum_command": {
+    "required_file": "out/audio-i2c-vendor-v159-audit/sources.json",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_source.SourceKernelTests.test_RAM_audio_queue_is_explicit_small_black_bounded_profile": {
+    "required_file": "out/audio-queue-v195-plan/mach.marble-source",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_source.SourceKernelTests.test_live_refill_requires_exact_producer_kernel_and_held_profile": {
+    "required_file": "out/audio-refill-v238-plan/mach.marble-source",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_source.SourceKernelTests.test_native_audio_transport_requires_explicit_short_queue_and_ABI": {
+    "required_file": "out/audio-native-transport-v206-plan/mach.marble-source",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_source.SourceKernelTests.test_owner_PCM_requires_explicit_new_kernel_and_eight_periods": {
+    "required_file": "out/audio-owner-PCM-v222-plan/mach.marble-source",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_source.SourceKernelTests.test_owner_eight_requires_explicit_matching_kernel_and_package": {
+    "required_file": "out/audio-owner-eight-v219-plan/mach.marble-source",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_source.SourceKernelTests.test_short_thermal_queue_pins_disk_and_duration": {
+    "required_file": "out/audio-queue-v195-plan/mach.marble-source",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_source.SourceKernelTests.test_signal_disk_is_restricted_to_explicit_PCM_owner": {
+    "required_file": "out/audio-owner-PCM-v222-plan/mach.marble-source",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_source.SourceKernelTests.test_stream24_is_distinct_from_legacy_refill_and_requires_exact_disk": {
+    "required_file": "out/audio-stream-window-v242-plan/mach.marble-source",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_tdm_graph_report.Controller.test_actual_controller_and_failure_recovery": {
+    "required_file": "out/adsp-owned-package-v1-plan/dependencies.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_tdm_run_report.ConnectedPCM.test_connected_controller_success_and_recovery": {
+    "required_file": "out/adsp-owned-package-v1-plan/dependencies.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_tdm_run_report.Run.test_controller": {
+    "required_file": "out/adsp-owned-package-v1-plan/dependencies.bin",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  },
+  "test_marble_touch.TouchTests.test_static_bridge_has_valid_kernel_entry_and_no_dyld": {
+    "required_file": "out/marble-touch-bridge",
+    "reason": "Requires locally generated artifacts or privately extracted vendor inputs; absent from public checkout."
+  }
+}

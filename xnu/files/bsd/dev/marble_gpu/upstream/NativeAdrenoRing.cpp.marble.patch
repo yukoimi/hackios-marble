@@ -1,0 +1,27 @@
+--- a/NativeAdrenoRing.cpp
++++ b/NativeAdrenoRing.cpp
+@@ -199,6 +199,24 @@
+     ring_iova_=fence_iova_=0;next_=rptr_shadow_=seqno_=completed_=submissions_=0;
+     return kIOReturnSuccess;
+ }
++IOReturn NativeAdrenoRing::adoptIdle(const NativeAdrenoRingIo *io,const NativeAdrenoRingCache *cache,
++    void *ring,void *fence,uint32_t position,uint32_t timestamp)
++{
++    if(attached_ || poisoned_ || !io || !cache || !io->write32 || !io->read32 || !io->barrier ||
++        !cache->publish || !cache->acquire || !ring || !fence || position>=4096 || !timestamp)return kIOReturnBadArgument;
++    uint32_t rptr,wptr,base,hi,ctrl,shadowBase,shadowHi;
++    if(io->read32(io->cookie,RingRptr,&rptr) || io->read32(io->cookie,RingWptr,&wptr) ||
++        io->read32(io->cookie,RingBase,&base) || io->read32(io->cookie,RingBase+1,&hi) ||
++        io->read32(io->cookie,RingControl,&ctrl) || io->read32(io->cookie,RingRptrAddress,&shadowBase) ||
++        io->read32(io->cookie,RingRptrAddress+1,&shadowHi) || rptr!=position || wptr!=position ||
++        base!=0x200000 || hi || ctrl!=0x20b || shadowBase!=0x300000 || shadowHi)return kIOReturnNotReady;
++    volatile uint32_t *mem=static_cast<volatile uint32_t *>(fence);
++    if(cache->acquire(cache->cookie,mem,0x4000) || mem[0]!=position || mem[1]!=timestamp)return kIOReturnNotReady;
++    io_=*io;cache_=*cache;ring_=static_cast<volatile uint32_t *>(ring);fence_=mem;
++    ring_bytes_=fence_bytes_=0x4000;ring_iova_=0x200000;fence_iova_=0x300000;
++    next_=rptr_shadow_=position;seqno_=completed_=timestamp;attached_=true;reset_pending_=true;
++    return kIOReturnSuccess;
++}
+ IOReturn NativeAdrenoRing::submit(const uint32_t *words,size_t word_count,uint32_t *fence)
+ {
+     return submitWords(words,word_count,fence,false);

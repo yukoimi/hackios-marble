@@ -1,0 +1,137 @@
+{
+  "xnu/files/bsd/dev/marble_audio_native_kernel.h": {
+    "host_sha256": "2d811f00e4bc645819788fb678b29230efacdc73567f6d0be822769e2013dbbb",
+    "build_sha256": "0d85c9ae4be23d6aaa2b60cbf9e68c0f19f15ce59b0e834ef852d02aeb8c9c26",
+    "normalized_match": true
+  },
+  "xnu/files/bsd/dev/redwood_audio.c": {
+    "host_sha256": "322ed68fe0a8a6704515708c0de1ffdab3f4df5fc9e32ac945015e3ba8ea9c49",
+    "build_sha256": "ff72d207165ffbed6b399e5cf4cf8470feefd28c384456f8494474aa30808368",
+    "normalized_match": true
+  },
+  "xnu/files/bsd/dev/redwood_guard.c": {
+    "host_sha256": "46bcf0eeb766e8ba10871d281a05cafdce27d9d8abc0992ecbd51c75f9d7e8eb",
+    "build_sha256": "9682db12231950cf001770bce451a7188c37b42fcc890ff8b8e9fcbcf24a3837",
+    "normalized_match": true
+  },
+  "xnu/files/bsd/sys/marble_audio_board_gate.h": {
+    "host_sha256": "d111064afd91ae24b01033cc4ba54e8a246f8ee876e869d260ba0661ad3d4374",
+    "build_sha256": "d111064afd91ae24b01033cc4ba54e8a246f8ee876e869d260ba0661ad3d4374",
+    "normalized_match": true
+  },
+  "xnu/files/bsd/sys/marble_audio_endpoint.h": {
+    "host_sha256": "bf72d689c39ce804e6443784977d6d84c5a7f2a00f6fa2cf75b8f7790929f496",
+    "build_sha256": "bf72d689c39ce804e6443784977d6d84c5a7f2a00f6fa2cf75b8f7790929f496",
+    "normalized_match": true
+  },
+  "xnu/files/bsd/sys/marble_audio_glink.h": {
+    "host_sha256": "9d219a7e2e0e793a245f2eda12e8ad3afcba696b83c0f1fe80e1252aeeb82484",
+    "build_sha256": "9d219a7e2e0e793a245f2eda12e8ad3afcba696b83c0f1fe80e1252aeeb82484",
+    "normalized_match": true
+  },
+  "xnu/files/bsd/sys/marble_audio_owner.h": {
+    "host_sha256": "261b9e3a3e3a5c2b1de5c2e965e9256ab2600c46cd24a5827b71dbb372dc7965",
+    "build_sha256": "261b9e3a3e3a5c2b1de5c2e965e9256ab2600c46cd24a5827b71dbb372dc7965",
+    "normalized_match": true
+  },
+  "xnu/files/bsd/sys/marble_audio_pcm_probe.h": {
+    "host_sha256": "ffe33af834257d89d021c404992db4321e3a74b5f1d7abf5283e6c9c07f83402",
+    "build_sha256": "ffe33af834257d89d021c404992db4321e3a74b5f1d7abf5283e6c9c07f83402",
+    "normalized_match": true
+  },
+  "xnu/files/bsd/sys/marble_audio_proof.h": {
+    "host_sha256": "ca5edebaf196b72a6145548a8b151a79eae6dce3ca4d7edd35d282e6603bde14",
+    "build_sha256": "ca5edebaf196b72a6145548a8b151a79eae6dce3ca4d7edd35d282e6603bde14",
+    "normalized_match": true
+  },
+  "xnu/files/bsd/sys/marble_audio_queue.h": {
+    "host_sha256": "db700b715df257e516d2d854890b955bd2a4745ecaca9103fa14c3a136d97373",
+    "build_sha256": "db700b715df257e516d2d854890b955bd2a4745ecaca9103fa14c3a136d97373",
+    "normalized_match": true
+  },
+  "xnu/files/bsd/sys/marble_audio_refill.h": {
+    "host_sha256": "294b36a71424532726d9d0af329f65eb83e97e7f2c0e8e3e13d8e71db1aed06d",
+    "build_sha256": "294b36a71424532726d9d0af329f65eb83e97e7f2c0e8e3e13d8e71db1aed06d",
+    "normalized_match": true
+  },
+  "xnu/files/bsd/sys/marble_audio_smem.h": {
+    "host_sha256": "fab813927d7b74827eeaec99beae404aa27a5785b47811e7026ecd2c8607a981",
+    "build_sha256": "fab813927d7b74827eeaec99beae404aa27a5785b47811e7026ecd2c8607a981",
+    "normalized_match": true
+  },
+  "xnu/files/bsd/sys/marble_audio_stream.h": {
+    "host_sha256": "076a9d2313c92b4c4a10fa39c803474b25db3c41c99eafb6ae818bf788b3d1d5",
+    "build_sha256": "076a9d2313c92b4c4a10fa39c803474b25db3c41c99eafb6ae818bf788b3d1d5",
+    "normalized_match": true
+  },
+  "xnu/files/bsd/sys/marble_audio_stream_window.h": {
+    "host_sha256": "aec75188dae915c39f29c388cbf6f82cc592fd702113b5e3d90927a9614fbfb7",
+    "build_sha256": "aec75188dae915c39f29c388cbf6f82cc592fd702113b5e3d90927a9614fbfb7",
+    "normalized_match": true
+  },
+  "xnu/files/bsd/sys/marble_audio_wire/marble_audio_clock.h": {
+    "host_sha256": "d39d488e0cc4bf043eb777e8ca7aad454000b44bbab8033808d3a72e7b1aaaf8",
+    "build_sha256": "d39d488e0cc4bf043eb777e8ca7aad454000b44bbab8033808d3a72e7b1aaaf8",
+    "normalized_match": true
+  },
+  "xnu/files/bsd/sys/marble_audio_wire/marble_glink_data.h": {
+    "host_sha256": "fb080207ef17a71a4e19644066a96416ff67bc4583301ab5799dc80da3d804c6",
+    "build_sha256": "fb080207ef17a71a4e19644066a96416ff67bc4583301ab5799dc80da3d804c6",
+    "normalized_match": true
+  },
+  "xnu/files/bsd/sys/marble_audio_wire/marble_glink_wire.h": {
+    "host_sha256": "ab80d42d461f153464ad49ff1778565311d054ecca78ed79ea39f320f02b46b7",
+    "build_sha256": "ab80d42d461f153464ad49ff1778565311d054ecca78ed79ea39f320f02b46b7",
+    "normalized_match": true
+  },
+  "xnu/files/bsd/sys/marble_audio_wire/marble_gpr.h": {
+    "host_sha256": "7466f3f0c31e25b6ebad9bd6b4952142002f9da421ab6b18496f8a96ad68f69e",
+    "build_sha256": "7466f3f0c31e25b6ebad9bd6b4952142002f9da421ab6b18496f8a96ad68f69e",
+    "normalized_match": true
+  },
+  "xnu/files/bsd/sys/marble_audio_wire/marble_mfc_graph.h": {
+    "host_sha256": "03beb28acd5554cf73568ae91feab285daea463c2bc3ab8c92793ccde588362d",
+    "build_sha256": "03beb28acd5554cf73568ae91feab285daea463c2bc3ab8c92793ccde588362d",
+    "normalized_match": true
+  },
+  "xnu/files/bsd/sys/marble_audio_wire/marble_pcm_data.h": {
+    "host_sha256": "7052a064137c7455110440a5e2eb15b8f7969c1479941cfcd99f73afcfa541e2",
+    "build_sha256": "7052a064137c7455110440a5e2eb15b8f7969c1479941cfcd99f73afcfa541e2",
+    "normalized_match": true
+  },
+  "xnu/files/bsd/sys/marble_audio_wire/marble_pcm_graph.h": {
+    "host_sha256": "6bf6fea709658b2d60171b02a61c6409ff768551fabdba121349d8a43ccdc41b",
+    "build_sha256": "6bf6fea709658b2d60171b02a61c6409ff768551fabdba121349d8a43ccdc41b",
+    "normalized_match": true
+  },
+  "xnu/files/bsd/sys/marble_audio_wire/marble_pcm_memory.h": {
+    "host_sha256": "260e96592dd5330ccc73c7d17c261118a107079be33f6d8fb3e3d77ef52a8ab7",
+    "build_sha256": "260e96592dd5330ccc73c7d17c261118a107079be33f6d8fb3e3d77ef52a8ab7",
+    "normalized_match": true
+  },
+  "xnu/files/bsd/sys/marble_audio_wire/marble_tdm_config.h": {
+    "host_sha256": "9c8116fea28ec2b550963b41af0b7b9a7370f9af6fd0d740851c6dcfd2012c74",
+    "build_sha256": "9c8116fea28ec2b550963b41af0b7b9a7370f9af6fd0d740851c6dcfd2012c74",
+    "normalized_match": true
+  },
+  "xnu/files/bsd/sys/marble_audio_wire/marble_tdm_graph.h": {
+    "host_sha256": "0c8ddbc1e6d7ab6987e77165a564b58b3e46b10227e36c50168341c10ade838c",
+    "build_sha256": "0c8ddbc1e6d7ab6987e77165a564b58b3e46b10227e36c50168341c10ade838c",
+    "normalized_match": true
+  },
+  "xnu/files/bsd/sys/marble_audio_wire/marble_tdm_run.h": {
+    "host_sha256": "734450cf6a5262b9c481f818781a339ecac4f7bfc7e8693718aca44ba6da2f07",
+    "build_sha256": "734450cf6a5262b9c481f818781a339ecac4f7bfc7e8693718aca44ba6da2f07",
+    "normalized_match": true
+  },
+  "xnu/files/bsd/sys/marble_audio_wire/sources.json": {
+    "host_sha256": "737a7afdd30dadf9ef7119a9d62a5b77946194c7b63a102632113dabab1983c3",
+    "build_sha256": "737a7afdd30dadf9ef7119a9d62a5b77946194c7b63a102632113dabab1983c3",
+    "normalized_match": true
+  },
+  "xnu/files/bsd/sys/redwood_audio.h": {
+    "host_sha256": "833c55eaaa092449dba2af4b12eff525a2d7b24d12eb27df45a3af85d091c90f",
+    "build_sha256": "556b8d21fae447ee08448d699ef81dc5af9e7d91539d826ecb08115367455ce1",
+    "normalized_match": true
+  }
+}

@@ -33,6 +33,7 @@ kern_return_t psci_smp_start_cpu(int cpu);
 void psci_smp_cpu_running(void);
 void psci_smp_cpu_off(void) __dead2;
 void gic_v3_irq_signal(uint32_t phys_id);
+void cpu_signal_handler(void);
 }
 
 /*
@@ -137,6 +138,11 @@ GenericARMCPU::initCPU(bool boot)
 		 * sleep when idle either: send it its first.
 		 */
 		gic_v3_irq_signal(physID);
+	} else {
+		/* The UP GIC profile has no SGI enabled. Complete the same initial
+		 * signal handshake locally, otherwise SIGPdisabled keeps cpu_idle()
+		 * spinning forever despite a sleeping userspace. */
+		cpu_signal_handler();
 	}
 }
 

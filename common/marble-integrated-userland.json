@@ -1,0 +1,11 @@
+{
+  "kernel_upstream_commit": "8e61187098f2c26c5daee8f9f72b6416aa64b9ab",
+  "userland_upstream_commit": "906425b75e02b4f99eb5d7bb1ef7c9583472d772",
+  "integrated_userland": true,
+  "userland_tracked_source_files": 302,
+  "copied_kernel_and_userland_paths": 1582,
+  "publication_date": "2026-11-01",
+  "public_fixture_transform": "UTF-8 text; binary capture trailer removed; test device serial redacted; absolute host paths generalized",
+  "historical_hardware_evidence": "reference/v259",
+  "current_source_not_equal_to_tested_kernel_snapshot": true
+}

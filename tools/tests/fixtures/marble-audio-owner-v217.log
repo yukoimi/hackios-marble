@@ -1,0 +1,28 @@
+aud-owner-fw: phase=kernel-ready-before-AUTH epoch=12253355 state=1 active=1 failed=0 accepted_sequence=2 submitted=0 completed=0 configured=0 PAS_stopped=0 restored=0 GLINK_owner=XNU EFI_FIFO_writes=0 audio_acceptance=0
+marble-pil-boot: auth status=0 transport=1 secure=0 elapsed_us=113867 accepted=1 hold_limit_ms=600 payload_access=0
+aud-owner-fw: phase=DMA-granted epoch=12253355 state=2 active=1 failed=0 accepted_sequence=2 submitted=0 completed=0 configured=0 PAS_stopped=0 restored=0 GLINK_owner=XNU EFI_FIFO_writes=0 audio_acceptance=0
+tp: acquired PASS=1 active=1 writes=6
+marble-aw-analog: complete device=34 PASS=1 attempted=1 writes=2 polls=1 ready=1 restored=1 dirty=0 status=311 HMUTE_retained=1 attenuation_db=90 speaker_switch_writes=0 audio_acceptance=0 elapsed_us=7248
+marble-aw-digital: complete device=34 PASS=1 attempted=1 writes=2 polls=1 locked=1 restored=1 dirty=0 sysctrl=b443 sysctrl2=f039 status=11 AMPPD_retained=0 HMUTE_retained=1 attenuation_db=90 speaker_switch_writes=0 audio_acceptance=0
+marble-aw-analog: complete device=35 PASS=1 attempted=1 writes=2 polls=1 ready=1 restored=1 dirty=0 status=311 HMUTE_retained=1 attenuation_db=90 speaker_switch_writes=0 audio_acceptance=0 elapsed_us=7229
+marble-aw-digital: complete device=35 PASS=1 attempted=1 writes=2 polls=1 locked=1 restored=1 dirty=0 sysctrl=3443 sysctrl2=f039 status=11 AMPPD_retained=0 HMUTE_retained=1 attenuation_db=90 speaker_switch_writes=0 audio_acceptance=0
+aw: window end PASS=1 config_active=0 clock_active=0 amp_commands=392
+aud-owner-board: profile=muted-Music zero_only=1 TDM_pin_writes=1 amplifier_commands=1 audible=0
+aud-owner-fw: phase=configured-real-START-proof epoch=12253355 state=3 active=1 failed=0 accepted_sequence=4 submitted=0 completed=0 configured=1 PAS_stopped=0 restored=0 GLINK_owner=XNU EFI_FIFO_writes=0 audio_acceptance=0
+aud-owner-fw: phase=retired-real-UNMAP-proof epoch=12253355 state=3 active=1 failed=0 accepted_sequence=6 submitted=2 completed=2 configured=1 PAS_stopped=0 restored=0 GLINK_owner=XNU EFI_FIFO_writes=0 audio_acceptance=0
+tp: end PASS=1 active=0 restored=1 writes=12 PAS_stopped=0 amp_changes=0
+marble-pil-boot: observed hold_us=390077 thermal_samples=4 thermal_ok=1 die_mc=44400 link_up=0 link_down=0 link_invalid=0 service_acceptance=0 audio_acceptance=0 runtime_ok=1
+marble-smp2p-boot: stopped PASS=1 ready_seen=1 stop_ack_seen=1 stop_clear=1 notifications=3 PAS_shutdown_allowed=1 payload_access=0
+marble-smccc: PAS_stop PASS=1 fn=42000206 arginfo=1 PAS_id=1 initial_a6=0 initial_a7=0 calls=44 outcome=0 raw_a0=0 raw_a1=0 raw_a2=0 raw_a3=0 raw_a6=0 previous_TPL=4 DAIF_before=300 DAIF_after=300 elapsed_us=608160 WAITQ_replays=0 auth_reset=0 DSP_start=1
+aud-owner-fw: phase=PAS-off-wait-XNU-unmap epoch=12253355 state=4 active=1 failed=0 accepted_sequence=6 submitted=2 completed=2 configured=1 PAS_stopped=1 restored=0 GLINK_owner=XNU EFI_FIFO_writes=0 audio_acceptance=0
+marble-audio-map: result PASS=1 stage=9 status=0 context=5 allocation=f9edd000 physical=f9ee0000 par=ff000f9ee0000a82 allocated=1 programmed=1 translated=1 disabled=1 restored=1 freed=1 retained=0 writes=35 translation_mode=2 stream_writes=8 PCM_requests=2
+aud-owner-fw: phase=DMA-released-after-XNU-unmap epoch=12253355 state=5 active=0 failed=0 accepted_sequence=8 submitted=2 completed=2 configured=1 PAS_stopped=1 restored=1 GLINK_owner=XNU EFI_FIFO_writes=0 audio_acceptance=0
+marble-pil-held: restored PASS=1 original_restored=1 free_status=0 backup_retained=0 shutdown_before_restore=1 DSP_start=1
+marble-adsp-owned: complete PASS=1 ROM_stage_restored=1 LPI_released=1 LPI_active=0 XO_retained=1 thermal_ok=1 ICB_RUN_retained=1 SMEM_retained=1 watchdog_armed=1 cold_reset_required=1 original_hardware_restored=0 DSP_start=1 storage_access=0 audio_acceptance=0
+aw: end PASS=1 called=1 window_passed=1 DSP_passed=1 DSP_dirty=0 config_active=0 clock_active=0 dirty=0 elapsed_us=5193420 amp_commands=392 cold_reset_required=1 audio_acceptance=0
+aud-owner-session: PASS=1 launched=1 protocol_completed=1 DMA_restored=1 HAL_sink=0 cold_reset_required=1
+marble-efi-idle: restored PASS=1 active=0 dirty=0 failed=0 saved=0 now=0 period_us=426 waits=16998 wait_us=3398306 max_wait_us=536 immediate=8527 late=0 max_poll_gap_us=2575171
+marble-cpucap: restored PASS=1 active=0 dirty=0 changed=0
+[   18.920396]: marble-audio-owner-kernel: ABI=MAUDIO-OWNER-XNU-ZERO-v1 phase=ready epoch=12253355 GLINK_owner=XNU zero=1 HAL_sink=0
+[   19.410521]: marble-audio-owner-kernel: phase=retired submitted=2 completed=2 published=2 RX=142 TX=23 zero=1
+[   20.041384]: marble-audio-owner-kernel: phase=complete PASS=1 submitted=2 completed=2 DMA_unmapped=1 PAS_off=1 route_restored=1 DMA_owner_released=1 HAL_sink=0 audio_acceptance=0

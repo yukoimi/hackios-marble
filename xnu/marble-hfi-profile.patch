@@ -1,0 +1,127 @@
+--- a/AdrenoHfi.c
++++ b/AdrenoHfi.c
+@@ -5,6 +5,10 @@
+ #error Modern GMU HFI transport requires little-endian AArch64
+ #endif
+ #define WORDS 1024u
++static unsigned queue_offset(AdrenoHfiProfile profile,unsigned q)
++{return profile==AdrenoHfiProfileMarbleGen7?0x350+q*4096:(q+1)*4096;}
++static unsigned queue_type(AdrenoHfiProfile profile,unsigned q)
++{return ((profile==AdrenoHfiProfileMarbleGen7 && q==2)?0x2800:0xa00)|q;}
+ static void acquire(void){__asm__ volatile("dmb oshld":::"memory");}
+ static void publish(void){__asm__ volatile("dsb oshst":::"memory");}
+ static void complete(void){__asm__ volatile("dmb osh":::"memory");}
+@@ -14,33 +18,41 @@
+     volatile uint32_t **data,uint32_t *read,uint32_t *write)
+ {
+     if(!h || !h->shared || !h->notify || !h->iova || (h->iova&4095) ||
+-        ((uintptr_t)h->shared&4095))return AdrenoHfiInvalid;
++        ((uintptr_t)h->shared&4095) ||
++        (h->profile!=AdrenoHfiProfileSheng && h->profile!=AdrenoHfiProfileMarbleGen7))return AdrenoHfiInvalid;
+     if(h->poisoned)return AdrenoHfiPoisoned;
+     volatile uint32_t *m=h->shared;acquire();
+-    if(m[0]!=0 || m[1]!=168 || m[2]!=6 || m[3]!=12 || m[4]!=3 || m[5]!=3)
++    if(m[0]!=0 || m[1]!=(h->profile==AdrenoHfiProfileMarbleGen7?210u:168u) || m[2]!=6 || m[3]!=12 || m[4]!=3 || m[5]!=3)
+         return poison(h,AdrenoHfiCorrupt);
+     volatile uint32_t *v=m+6+12*q;
+-    if(v[0]!=1 || v[1]!=h->iova+(q+1)*4096 || v[2]!=(0xa00|q) ||
++    if(v[0]!=1 || v[1]!=h->iova+queue_offset(h->profile,q) || v[2]!=queue_type(h->profile,q) ||
+         v[3]!=WORDS || v[4]!=0)return poison(h,AdrenoHfiCorrupt);
++    if(h->profile==AdrenoHfiProfileMarbleGen7)
++        for(unsigned i=5;i<10;i++)if(v[i])return poison(h,AdrenoHfiCorrupt);
+     *read=v[10];*write=v[11];acquire();
+     if(*read>=WORDS || *write>=WORDS || (*read&3) || (*write&3))return poison(h,AdrenoHfiCorrupt);
+-    *header=v;*data=m+(q+1)*WORDS;return AdrenoHfiSuccess;
++    *header=v;*data=m+queue_offset(h->profile,q)/4;return AdrenoHfiSuccess;
+ }
+ AdrenoHfiStatus AdrenoHfiInitializeStopped(AdrenoHfi *h,volatile uint32_t *shared,
+     size_t bytes,uint64_t iova,void *cookie,int (*notify)(void *))
++{return AdrenoHfiInitializeStoppedProfile(h,shared,bytes,iova,cookie,notify,AdrenoHfiProfileSheng);}
++AdrenoHfiStatus AdrenoHfiInitializeStoppedProfile(AdrenoHfi *h,volatile uint32_t *shared,
++    size_t bytes,uint64_t iova,void *cookie,int (*notify)(void *),AdrenoHfiProfile profile)
+ {
+     if(!h || !shared || !notify || bytes!=16384 || ((uintptr_t)shared&4095) ||
+-        (uintptr_t)shared>UINTPTR_MAX-16383 || !iova || (iova&4095) || iova>UINT32_MAX-16383)
++        (uintptr_t)shared>UINTPTR_MAX-16383 || !iova || (iova&4095) || iova>UINT32_MAX-16383 ||
++        (profile!=AdrenoHfiProfileSheng && profile!=AdrenoHfiProfileMarbleGen7))
+         return AdrenoHfiInvalid;
+     for(unsigned i=0;i<4096;++i)shared[i]=0;
+-    shared[1]=168;shared[2]=6;shared[3]=12;shared[4]=3;shared[5]=3;
++    shared[1]=profile==AdrenoHfiProfileMarbleGen7?210:168;
++    shared[2]=6;shared[3]=12;shared[4]=3;shared[5]=3;
+     for(unsigned q=0;q<3;++q) {
+         volatile uint32_t *v=shared+6+12*q;
+-        v[0]=1;v[1]=(uint32_t)iova+(q+1)*4096;v[2]=0xa00|q;v[3]=WORDS;
+-        v[6]=1;v[7]=1;v[8]=1;
++        v[0]=1;v[1]=(uint32_t)iova+queue_offset(profile,q);v[2]=queue_type(profile,q);v[3]=WORDS;
++        if(profile==AdrenoHfiProfileSheng) {v[6]=1;v[7]=1;v[8]=1;}
+     }
+     publish();
+-    *h=(AdrenoHfi){shared,(uint32_t)iova,0,0,0,cookie,notify,0,0,0,0};
++    *h=(AdrenoHfi){shared,(uint32_t)iova,0,0,0,cookie,notify,0,0,0,0,profile,0,0};
+     return AdrenoHfiSuccess;
+ }
+ AdrenoHfiStatus AdrenoHfiSend(AdrenoHfi *h,unsigned id,const uint32_t *payload,
+@@ -74,7 +86,10 @@
+     if(!h->pending_header)return AdrenoHfiInvalid;
+     /* A ring holds at most WORDS/4 packets; each pass consumes one. */
+     for(unsigned pass=0;pass<WORDS/4;++pass) {
+-        if(read==write) {v[8]=1;publish();return AdrenoHfiEmpty;}
++        if(read==write) {
++            if(h->profile==AdrenoHfiProfileSheng) {v[8]=1;publish();}
++            return AdrenoHfiEmpty;
++        }
+         uint32_t packet[19];uint32_t header=data[read];unsigned count=(header>>8)&255;
+         unsigned available=(write-read)&(WORDS-1),padded=(count+3)&~3u;
+         if(!count || count>19 || padded>available)return poison(h,AdrenoHfiCorrupt);
+@@ -82,6 +97,8 @@
+         complete();
+         const int firmware_error=(header&255)==100;
+         const int match=!firmware_error && count>=3 && (packet[1]>>20)==(h->pending_header>>20);
++        if(match && h->profile==AdrenoHfiProfileMarbleGen7 && ((header>>16)&15)!=1)
++            return poison(h,AdrenoHfiUnexpected);
+         if(!match) {
+             if(count<2)return poison(h,AdrenoHfiCorrupt);
+             if(!h->skipped++) {h->skipped_header=header;h->skipped_ret=packet[1];h->skipped_code=count>2?packet[2]:0;}
+@@ -89,6 +106,7 @@
+             continue;
+         }
+         if(packet[2]) {*error=packet[2];return poison(h,AdrenoHfiFirmwareError);}
++        h->last_ack_header=header;h->last_ack_return=packet[1];
+         /* Copy only the checked matching response, never padding. This is not
+          * cryptographic authentication of firmware or its response. */
+         for(unsigned i=3;i<count;++i)payload[i-3]=packet[i];
+--- a/AdrenoHfi.h
++++ b/AdrenoHfi.h
+@@ -11,6 +11,10 @@
+     AdrenoHfiEmpty,AdrenoHfiCorrupt,AdrenoHfiUnexpected,AdrenoHfiFirmwareError,
+     AdrenoHfiNotifyError,AdrenoHfiWaitError,AdrenoHfiTimeout,AdrenoHfiPoisoned
+ } AdrenoHfiStatus;
++
++/* Explicit wire layouts; preserve the original sheng profile for callers.
++ * MarbleGen7 follows Xiaomi 48952ed3 adreno_hfi.h/gen7_hfi_init. */
++typedef enum {AdrenoHfiProfileSheng=0,AdrenoHfiProfileMarbleGen7=1} AdrenoHfiProfile;
+ typedef struct {
+     volatile uint32_t *shared;
+     uint32_t iova,sequence,pending_header,poisoned;
+@@ -19,6 +23,8 @@
+     /* Diagnostics of skipped response packets (a6xx_hfi_wait_for_ack skips firmware error messages and replies to
+      * another sequence number): their count and the first one's header, return header and code. */
+     uint32_t skipped,skipped_header,skipped_ret,skipped_code;
++    AdrenoHfiProfile profile;
++    uint32_t last_ack_header,last_ack_return;
+ } AdrenoHfi;
+ /* Modern (nonlegacy) GMU HFI only. Caller owns an exclusive, 16KiB extent
+  * mapped with four native4K pages, coherent for CPU and GMU, and a valid 32bit
+@@ -32,6 +38,11 @@
+  * proved. Poison/timeout/notify failure do not establish safe release. */
+ AdrenoHfiStatus AdrenoHfiInitializeStopped(AdrenoHfi *,volatile uint32_t *,
+     size_t shared_bytes,uint64_t iova,void *cookie,int (*notify)(void *));
++/* Same stopped/ownership/coherence prerequisites, explicitly selecting layout.
++ * Marble: 210-word table, 0x350+q*0x1000 queue offsets, debug priority40,
++ * unused queue fields zero. Allocation remains 16KiB/four native4K pages. */
++AdrenoHfiStatus AdrenoHfiInitializeStoppedProfile(AdrenoHfi *,volatile uint32_t *,
++    size_t,uint64_t,void *,int (*)(void *),AdrenoHfiProfile);
+ /* payload excludes the wire header. One command may be outstanding. A failed
+  * notify after publishing is indeterminate: poisons the session, no retry.
+  * NoSpace/Busy refuse before publishing. No firmware readiness is inferred. */

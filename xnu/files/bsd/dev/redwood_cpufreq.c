@@ -18,6 +18,7 @@
 #include <mach/mach_types.h>
 #include <machine/machine_routines.h>
 #include <pexpert/pexpert.h>
+#include <pexpert/device_tree.h>
 #include <sys/redwood_input.h>
 #include <sys/systm.h>
 #include <vm/vm_kern.h>
@@ -27,6 +28,8 @@ extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
 extern void loader_log_putc(char c);
 extern void redwood_tl(const char *format, ...) __printflike(1, 2);
 extern bool ml_cpu_idle_time(int cpu_id, uint64_t *idle);
+extern void marble_idle_probe_init(void);
+extern void marble_idle_probe_report(void);
 
 /*
  * The loader's log as well: this runs early, and the kernel's own log of a run keeps only its end. With
@@ -285,6 +288,7 @@ load_thread(void *arg __unused, wait_result_t wr __unused)
 		}
 		then = now;
 		redwood_tl("%s\n", line);
+		marble_idle_probe_report();
 	}
 }
 
@@ -554,12 +558,92 @@ redwood_ddr_quiesce(void)
 	tell("ddr: memory bandwidth vote %u for the loader: %s\n", rest, done ? "done" : "FAILED");
 }
 
+/* Marble diagnostics are opt-in and read-only. A requested EPSS row is not a
+ * measurement of the effective clock; no frequency/voltage register is written. */
+static void
+marble_cpu_probe(void)
+{
+	uint32_t enabled = 0;
+	DTEntry entry;
+	void const *prop;
+	unsigned int size;
+	if (!PE_parse_boot_argn("marble_cpu_probe", &enabled, sizeof(enabled)) || enabled != 1) return;
+	if (SecureDTLookupEntry(NULL, "/arm-io/marble-cpu-telemetry", &entry) != kSuccess ||
+	    SecureDTGetProperty(entry, "epss-regs", &prop, &size) != kSuccess || size != 3 * sizeof(uint64_t)) return;
+	uint64_t const *regs = prop;
+	for (unsigned d = 0; d < 3; d++) {
+		if (regs[d] != 0x17d91000ULL + d * 0x1000) return;
+	}
+	for (unsigned d = 0; d < 3; d++) {
+		vm_offset_t base = ml_io_map(regs[d], 0x1000);
+		if (!base) continue;
+		uint32_t state = *(volatile uint32_t *)(base + EPSS_PERF_STATE);
+		uint32_t row = state & 0xff;
+		if (row >= EPSS_TABLE_ROWS) {
+			tell("marble-cpu: domain %u requested row %#x outside LUT; no writes\n", d, state);
+			continue;
+		}
+		uint32_t word = *(volatile uint32_t *)(base + EPSS_FREQ_TABLE + row * 4);
+		uint32_t khz = (word >> 30) ? XO_KHZ * (word & 0xff) : ALTERNATE_KHZ;
+		tell("marble-cpu: domain %u requested row %u LUT %#x requested %u MHz (not effective clock); no writes\n",
+		    d, row, word, khz / 1000);
+	}
+}
+
+/* Loader owns a reversible marble-only request lease. XNU never writes these
+ * registers. Refuse initialization if the opted-in lease/DT disagrees, before
+ * userspace or GPU initialization. Requested OPP is not effective clock Hz. */
+static void
+marble_cpu_cap_check(void)
+{
+	static const char marker[]="MCPU-MARBLE-CAP-CHECK-v2";
+	uint32_t enabled=0;
+	DTEntry entry;
+	void const *prop;
+	unsigned int size;
+	if(!PE_parse_boot_argn("marble_cpu_cap",&enabled,sizeof(enabled)) || enabled!=1)return;
+	if(SecureDTLookupEntry(NULL,"/arm-io/marble-cpu-telemetry",&entry)!=kSuccess ||
+	   SecureDTGetProperty(entry,"compatible",&prop,&size)!=kSuccess ||
+	   size!=sizeof("marble,epss-request-cap-v1") ||
+	   memcmp(prop,"marble,epss-request-cap-v1",size))panic("marble CPU cap: loader ABI missing");
+	if(SecureDTGetProperty(entry,"request-cap-khz",&prop,&size)!=kSuccess ||
+	   size!=2*sizeof(uint32_t))panic("marble CPU cap: limits missing");
+	const uint32_t *caps=prop;
+	if(caps[0]!=1209600 || caps[1]!=1171200)panic("marble CPU cap: unsupported limits");
+	if(SecureDTGetProperty(entry,"cap-mailbox-pa",&prop,&size)!=kSuccess ||
+	   size!=sizeof(uint64_t))panic("marble CPU cap: mailbox missing");
+	uint64_t pa=*(const uint64_t *)prop;
+	if(!pa || (pa&0x1fff))panic("marble CPU cap: mailbox alignment");
+	volatile uint64_t *mailbox=(volatile uint64_t *)ml_io_map_wcomb(pa,0x2000);
+	if(!mailbox || mailbox[0]!=0x315041435550434dULL || mailbox[1] || mailbox[2])
+		panic("marble CPU cap: stale mailbox");
+	/* CPU_ON changes inherited requests. Ask EFI only after all boot CPUs
+	 * have joined; no GPU/userspace work starts before this handshake. */
+	mailbox[1]=1;__asm__ volatile("dsb sy" ::: "memory");
+	for(unsigned wait=0;!mailbox[2] && wait<2000;wait++)delay_for_interval(1,NSEC_PER_MSEC);
+	if(mailbox[2]!=2)panic("marble CPU cap: loader handshake failed");
+	for(unsigned d=0;d<2;d++) {
+		vm_offset_t base=ml_io_map(0x17d92000ULL+d*0x1000,0x1000);
+		if(!base)panic("marble CPU cap: mapping failed");
+		uint32_t row=*(volatile uint32_t *)(base+EPSS_PERF_STATE);
+		if(row>=(d?19:17))panic("marble CPU cap: invalid row");
+		uint32_t word=*(volatile uint32_t *)(base+EPSS_FREQ_TABLE+row*4);
+		uint32_t khz=(word>>30)?XO_KHZ*(word&255):ALTERNATE_KHZ;
+		if(khz<(d?787200:633600) || khz>caps[d] || ((word>>16)&7)!=4)
+			panic("marble CPU cap: request outside lease");
+		tell("%s domain=%u row=%u requested_khz=%u PASS=1; no XNU writes\n",marker,d+1,row,khz);
+	}
+}
+
 void
 redwood_cpufreq_init(void)
 {
 	const ml_topology_info_t *topology = ml_get_topology_info();
 	uint32_t enabled = 0, cores[EPSS_DOMAINS] = { 0 }, before, here;
 
+	marble_idle_probe_init();
+	marble_cpu_cap_check();
+	marble_cpu_probe();
 	load_start();
 	enabled = 2;
 	PE_parse_boot_argn("ddr", &enabled, sizeof(enabled));

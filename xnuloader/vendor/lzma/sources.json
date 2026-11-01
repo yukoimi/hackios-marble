@@ -1,0 +1,30 @@
+{
+  "upstream": "tianocore/edk2 edk2-stable202408, LZMA SDK 19.00",
+  "license": "Public domain SDK; upstream files retained unmodified",
+  "files": {
+    "LzmaDec.c": {
+      "url": "https://raw.githubusercontent.com/tianocore/edk2/edk2-stable202408/MdeModulePkg/Library/LzmaCustomDecompressLib/Sdk/C/LzmaDec.c",
+      "sha256": "37147fe4ebe6ab467610f423419da50733b61c2f878a7ff9ac352046e7c9e595"
+    },
+    "LzmaDec.h": {
+      "url": "https://raw.githubusercontent.com/tianocore/edk2/edk2-stable202408/MdeModulePkg/Library/LzmaCustomDecompressLib/Sdk/C/LzmaDec.h",
+      "sha256": "b4f0cdd7b8ae5c59d950b6ad20435448eda8e76b9e6d2f6b594bb794c6c14ab2"
+    },
+    "7zTypes.h": {
+      "url": "https://raw.githubusercontent.com/tianocore/edk2/edk2-stable202408/MdeModulePkg/Library/LzmaCustomDecompressLib/Sdk/C/7zTypes.h",
+      "sha256": "d870f8ed17b18f75a6cc3f2a5ef44515d26e1490ef225966d41ee08569b514e6"
+    },
+    "CpuArch.h": {
+      "url": "https://raw.githubusercontent.com/tianocore/edk2/edk2-stable202408/MdeModulePkg/Library/LzmaCustomDecompressLib/Sdk/C/CpuArch.h",
+      "sha256": "1c16cd9a01b748afa7ebcbc758091a88b174823f437d4cc1b3d46ecfa01f5dd7"
+    },
+    "Compiler.h": {
+      "url": "https://raw.githubusercontent.com/tianocore/edk2/edk2-stable202408/MdeModulePkg/Library/LzmaCustomDecompressLib/Sdk/C/Compiler.h",
+      "sha256": "fcc67dcc9369c815d8603422f1ce04cd9f640cbc5ab48825c0c1a51ec8881c2b"
+    },
+    "Precomp.h": {
+      "url": "https://raw.githubusercontent.com/tianocore/edk2/edk2-stable202408/MdeModulePkg/Library/LzmaCustomDecompressLib/Sdk/C/Precomp.h",
+      "sha256": "3850ffe13cb2207dba1c037fe41a803303883aaeec1407052f6038c4e6722ace"
+    }
+  }
+}

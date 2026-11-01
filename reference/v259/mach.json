@@ -1,0 +1,8 @@
+{
+  "profile": "marble-source-v1",
+  "xnu_base": "c54f35ca767986246321eb901baf8f5ff7923f6a",
+  "kernel_sha256": "1d3bf5af38032c6d6d9a93562e58d223422b3751520e7dfa7c9dcac2217e75dd",
+  "gic_source_sha256": "56d37ca11e3d2f8e4e2b07fc53d2b68cefdb820c9a2f2e1fdb65a491763de4fb",
+  "kernel_file": "mach.marble-source",
+  "hardware_status": "CANDIDATE_UNTESTED_AUDIO_DISPLAY_DMA_V259"
+}

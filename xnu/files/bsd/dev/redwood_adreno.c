@@ -100,6 +100,7 @@
 #include <sys/stat.h>
 #include <sys/systm.h>
 #include <vm/vm_kern.h>
+#include "marble_gpu/marble_gpu_service.h"
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
@@ -3129,6 +3130,8 @@ gpu_block_stop(void)
 void
 redwood_adreno_quiesce(void)
 {
+    extern bool marble_adreno_quiesce(void);
+    if (marble_adreno_quiesce()) return;
 	if (cx_off) {
 		return;
 	}
@@ -3278,6 +3281,12 @@ gpu_address_span(uint64_t size)
 
 	return gpu_va >= 2 ? span + GPU_ADDRESS_GRANULE : span;
 }
+/* Reuse the allocator, inside marble's separately audited empty aperture. */
+void redwood_gpu_marble_allocator(void)
+{
+    if(gpu_free_count || gpu_va_live)panic("marble GPU allocator already used");
+    gpu_free[0].start=0x4000000;gpu_free[0].size=0x1c000000;gpu_free_count=1;
+}
 
 extern void RedwoodGPUStart(void);
 extern void RedwoodGPUStop(void);       /* takes the clients' lock, then calls redwood_gpu_stop() */
@@ -3295,6 +3304,7 @@ static void gpu_block_stop(void);
 void
 redwood_gpu_stop(void)
 {
+    if(marble_gpu_board()){marble_gpu_stop_locked();return;}
 	if (gpu_kept) {
 		uint32_t waited = 0;
 
@@ -3319,6 +3329,8 @@ redwood_gpu_stop(void)
 void
 redwood_adreno_stop(void)
 {
+    extern bool marble_adreno_stop(void);
+    if (marble_adreno_stop()) return;
 	uint32_t dirty = 0;
 
 	if (gpu_kept && !(PE_parse_boot_argn("adreno_dirty", &dirty, sizeof(dirty)) && dirty)) {
@@ -3329,6 +3341,7 @@ redwood_adreno_stop(void)
 bool
 redwood_gpu_ready(void)
 {
+    if(marble_gpu_board())return marble_gpu_ready();
 	return gpu_kept;
 }
 
@@ -3336,6 +3349,7 @@ redwood_gpu_ready(void)
 bool
 redwood_gpu_parameter(uint32_t which, uint64_t *value)
 {
+    if(marble_gpu_board())return marble_gpu_parameter(which,value);
 	switch (which) {
 	case 0x01:                              /* GPU_ID: none, the chip ID says it */
 	case 0x06:                              /* GMEM_BASE */
@@ -3479,18 +3493,21 @@ redwood_gpu_space(uint64_t *used, uint32_t *live, uint64_t *largest, unsigned *h
 bool
 redwood_gpu_map(uint64_t address, uint64_t phys, bool read_only)
 {
+    if(marble_gpu_board())return marble_gpu_map(address,phys,read_only);
 	return space_map(&core_space, address, phys, PTE_CORE | (read_only ? PTE_READ_ONLY : 0));
 }
 
 void
 redwood_gpu_mapped(void)
 {
+    if(marble_gpu_board()){marble_gpu_mapped();return;}
 	space_commit(&core_space);
 }
 
 void
 redwood_gpu_unmap(uint64_t address, uint64_t size)
 {
+    if(marble_gpu_board()){marble_gpu_unmap(address,size);return;}
 	uint32_t context = smmu_context(&core_space);
 
 	for (uint64_t offset = 0; offset < size; offset += 4096) {
@@ -3507,13 +3524,28 @@ redwood_gpu_unmap(uint64_t address, uint64_t size)
 void
 redwood_gpu_to_memory(void *start, uint64_t size)
 {
+	/* CPU cache lines must not race GPU writes. A zero-length publication
+	 * barrier has no lines to clean/invalidate and need not drain the ring. */
+	if(size && marble_gpu_board())marble_gpu_prepare();
 	to_memory((vm_offset_t)start, size);
+}
+
+/* Caller holds gGPULock and names the most recent use of this entire range,
+ * across all handles. Mapping changes and unknown ranges use the full drain. */
+bool
+redwood_gpu_to_memory_fenced(void *start, uint64_t size, uint32_t fence)
+{
+	extern bool marble_gpu_prepare_buffer(uint32_t fence);
+	bool queued = size && marble_gpu_board() && marble_gpu_prepare_buffer(fence);
+	to_memory((vm_offset_t)start, size);
+	return queued;
 }
 
 /* How far the 3D core has got. */
 bool
 redwood_gpu_done(uint32_t fence)
 {
+    if(marble_gpu_board())return marble_gpu_done(fence);
 	volatile uint32_t *word = (volatile uint32_t *)(core_scratch.memory + GPU_FENCE_AT);
 
 	to_memory((vm_offset_t)word, 4);
@@ -3523,6 +3555,7 @@ redwood_gpu_done(uint32_t fence)
 uint32_t
 redwood_gpu_last(void)
 {
+    if(marble_gpu_board())return marble_gpu_last();
 	return gpu_fence;
 }
 
@@ -3578,6 +3611,7 @@ gpu_times(void)
 void
 redwood_gpu_worked(uint64_t *microseconds, uint32_t *submissions, uint32_t by[7])
 {
+    if(marble_gpu_board()){*microseconds=0;*submissions=0;bzero(by,7*sizeof(*by));return;}
 	gpu_times();
 	*microseconds = gpu_ticks * 10 / 192;
 	*submissions = gpu_timed_count;
@@ -3595,6 +3629,7 @@ redwood_gpu_worked(uint64_t *microseconds, uint32_t *submissions, uint32_t by[7]
 uint32_t
 redwood_gpu_submit(const uint64_t *addresses, const uint32_t *words, uint32_t count)
 {
+    if(marble_gpu_board())return marble_gpu_submit(addresses,words,count);
 	uint32_t wanted = 26 + 4 * count, room = 0;
 
 	for (int i = 0; i < 20000; i++) {
@@ -3640,6 +3675,7 @@ redwood_gpu_submit(const uint64_t *addresses, const uint32_t *words, uint32_t co
 void
 redwood_gpu_report(const char *why)
 {
+    if(marble_gpu_board()){marble_gpu_report(why);return;}
 	uint32_t context = smmu_context(&core_space);
 
 	printf("adreno: gpu: %s: submission %u is the last, the core has done %u; ring: read up to %u, written up to %u; status "
@@ -3712,6 +3748,7 @@ redwood_gpu_report(const char *why)
 bool
 redwood_gpu_recover(void)
 {
+    if(marble_gpu_board())return false;
 	uint32_t fence_status;
 
 	if (!gpu_kept || !gpu_recover) {
@@ -4019,6 +4056,8 @@ start_by_itself(void)
 void
 redwood_adreno_init(void)
 {
+	extern bool marble_adreno_init(void);
+	if (marble_adreno_init()) return;
 	static const char *const what[] = {
 		"", "the clocks outside", "the fuses", "the clock controller", "the CX half's power", "the clocks", "the first words",
 		"the GMU's RPMh sequencer", "the SMMU", "an SMMU context", "the GMU's memory", "TrustZone", "the zap shader's header",

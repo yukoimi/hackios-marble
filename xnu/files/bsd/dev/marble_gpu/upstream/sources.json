@@ -1,0 +1,94 @@
+[
+  {
+    "repository": "https://github.com/UniXNU/AdrenoFirmware",
+    "commit": "40fdb8ea87606612ac6f1e80bbb49955d0ce4051",
+    "files": [
+      {
+        "path": "AdrenoFirmware.c",
+        "sha256": "c3cc714a65ce90216a0fc5c6f0e102ae1769c45e559c08f94a0b5f6fa3e97070"
+      },
+      {
+        "path": "AdrenoFirmware.h",
+        "sha256": "6b2e308f2feae92642f21da2667c3665a2e234ef79e7c5400e7aac7dd3c5b7ed"
+      },
+      {
+        "path": "AdrenoHfi.c",
+        "sha256": "5d7da3145157fd945d626d4567c95626fdbbc8fb6a65d8f67701ffb1e64f7d2e"
+      },
+      {
+        "path": "AdrenoHfi.h",
+        "sha256": "615cb21d1c7bd3729e3b36d361f0f78bbaacb1bd8931a268797e00505e05f0b8"
+      },
+      {
+        "path": "AdrenoHfiStartup.c",
+        "sha256": "0bdc60bb35aae37e01a2466e6ecf95ed7c444389526ec8471e2a2422624a6c81"
+      },
+      {
+        "path": "AdrenoHfiStartup.h",
+        "sha256": "03878418998c4e75ccf5a3ee9112631f676ae5a604cb453c52ea480e0826f4e1"
+      },
+      {
+        "path": "AdrenoHfiVotes.c",
+        "sha256": "20f021f8eeb9d32def09c3d5d58c6fd97e96b77932113f373d634ab6d184abda"
+      },
+      {
+        "path": "AdrenoHfiVotes.h",
+        "sha256": "6e8e89a0b947868f103b241ca86e3c25aa6229a54bc581022728b4eda9070f4c"
+      }
+    ]
+  },
+  {
+    "repository": "https://github.com/UniXNU/ArmSmmu4K",
+    "commit": "4d0d6598b1a36aeec3de01091893fa6660e49388",
+    "files": [
+      {
+        "path": "ArmSmmu4K.c",
+        "sha256": "0adb19b483e56e723014ed6cfe2c29f9d9735ae2770f62cf0057b22937dbd157"
+      },
+      {
+        "path": "ArmSmmu4K.h",
+        "sha256": "e25063b9134afc7eb79e7c030bc2858608cf0ade5da714d5dfd600fee5007e8e"
+      },
+      {
+        "path": "ArmSmmu4KContext.c",
+        "sha256": "b8e32e32d1f07e71de65f31b12963ab8b01c05755f8c60c2d6f40cb03fe4eca8"
+      },
+      {
+        "path": "ArmSmmu4KContext.h",
+        "sha256": "c842e78f37eab2e7cbba28cb89f4b993d9202503e75fee9e49a871101b936e53"
+      },
+      {
+        "path": "ArmSmmu4KProgram.c",
+        "sha256": "3b1d4911b0a48f90b09c721ffd2eb95dbfc02e96165009b23f8c98841f36e2b0"
+      },
+      {
+        "path": "ArmSmmu4KProgram.h",
+        "sha256": "171900c3ed400b805c3a1587959f66bc4a19db18aedc8111e862651a90bb8d8f"
+      },
+      {
+        "path": "ArmSmmu4KStreams.c",
+        "sha256": "359610de6974c1885b4b7bbf72e6b321a013e1cc44200e1a8f566d09722c009a"
+      },
+      {
+        "path": "ArmSmmu4KStreams.h",
+        "sha256": "1cfca0b4e3acba420cc829098b52d61c4905ec64d2aa57883dedae9dfb212969"
+      },
+      {
+        "path": "ArmSmmu4KAudit.c",
+        "sha256": "594739cebc43926b1cb0a0e965867bcf1edfb90fab9c51465b65fa47be3755c1"
+      },
+      {
+        "path": "ArmSmmu4KAudit.h",
+        "sha256": "1f313acd46db3dfecc115b8c885c5c43f7d23f73690a6157f900dfc77b2c9f6a"
+      },
+      {
+        "path": "ArmSmmu4KLive.c",
+        "sha256": "a50375331e7e3affc1b4ff9048508a75c080a468eff7c8f513b1f9937e2ba010"
+      },
+      {
+        "path": "ArmSmmu4KLive.h",
+        "sha256": "7532ad419d630dd308628e60746860c992499474d14237f3f39e04e20e0722bb"
+      }
+    ]
+  }
+]

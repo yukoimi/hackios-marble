@@ -25,7 +25,9 @@ URL=${USERLAND_URL:-https://github.com/oosexgang/hackios-xnu-userland.git}
 REF=${USERLAND_REF:-main}
 UG=(git --git-dir="$ROOT/.userland.git" --work-tree="$ROOT")
 
-if [ ! -d .userland.git ]; then
+if [ -f common/marble-integrated-userland.json ]; then
+	echo "setup: pinned userland sources already integrated; no overlay checkout needed"
+elif [ ! -d .userland.git ]; then
 	echo "setup: cloning $URL ($REF) into this tree"
 	tmp=$(mktemp -d)
 	git clone --no-checkout --branch "$REF" "$URL" "$tmp/u"
@@ -49,7 +51,7 @@ else
 	cp common/userland.exclude .userland.git/info/exclude
 	"${UG[@]}" pull --ff-only || echo "setup: could not fast-forward the userland checkout (local changes?)"
 fi
-"${UG[@]}" log -1 --format='setup: hackios-xnu-userland at %h (%cs) %s'
+[ -f common/marble-integrated-userland.json ] || "${UG[@]}" log -1 --format='setup: hackios-xnu-userland at %h (%cs) %s'
 git log -1 --format='setup: hackios-xnu-kernel   at %h (%cs) %s'
 
 # host check: what is missing only matters for the step that needs it

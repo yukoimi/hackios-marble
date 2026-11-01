@@ -26,6 +26,7 @@
 #include <libkern/c++/OSCollectionIterator.h>
 #include <kern/thread_call.h>
 #include <kern/thread.h>
+#include <kern/sched_prim.h>
 #include <kern/clock.h>
 #include <pexpert/pexpert.h>
 #include <sys/systm.h>
@@ -39,6 +40,8 @@ extern struct vc_info vinfo;            /* the boot framebuffer, as the text con
 #include <IOKit/IOBufferMemoryDescriptor.h>
 
 #include "MiniIOSurface.h"
+#include <IOKit/IOBufferMemoryDescriptor.h>
+#include "MarbleScanout.inc"
 
 extern "C" void redwood_tl(const char * format, ...) __printflike(1, 2);
 
@@ -67,6 +70,8 @@ enum {
 };
 
 /* The swap request (IOMobileFramebufferSwapEnd): 0x46c bytes, of which we read these. */
+#include "../../bsd/sys/marble_gpu_scale.h"
+
 #define SWAP_SIZE               0x46c
 #define SWAP_ID                 0x50
 #define SWAP_SURFACE(layer)     (0x54 + 4 * (layer))    /* surface number, 0 = none */
@@ -106,9 +111,10 @@ static uint8_t  gFBCalls[128];          /* how many calls of each selector were 
 static TUNABLE(uint32_t, gFBWidth, "fbwidth", kFBDefaultWidth);
 static TUNABLE(uint32_t, gFBHeight, "fbheight", kFBDefaultHeight);
 /*
- * Boot-arg fbscale=2: the same 375 x 812 points drawn at two pixels a point instead of three.
- * Everything that is drawn is drawn by the processor, and this is 2.25 times fewer pixels to
- * draw; the picture is then enlarged to the panel and is that much less sharp.
+ * Boot-arg fbscale=2: candidate 414 x 896 point layout at 828 x 1792 pixels.
+ * The former 375 x 812 at 2x produced an unknown UIKit screen class and a
+ * diagnostic status bar. Keep the baseline 375 x 812 at 3x unchanged.
+ * The lower-resolution candidate is enlarged to the panel and is less sharp.
  */
 #define kFBPointsWide           375
 #define kFBPointsHigh           812
@@ -155,6 +161,8 @@ static TUNABLE(uint32_t, gDiff, "fb_diff", 0);
  */
 static TUNABLE(uint32_t, gFilter, "fb_filter", 1);
 static TUNABLE(uint32_t, gRefreshHz, "fb_hz", kFBRefreshHz);
+/* TUNABLE storage is read-only after boot; hardware measurements are runtime state. */
+static uint32_t gObservedRefreshHz;
 static TUNABLE(uint32_t, gOnTheBeat, "fb_beat", 1);
 /*
  * Boot-arg fb_threads=N (1 to 8): so many processors scale a frame onto the panel together (see
@@ -189,6 +197,7 @@ micros(uint64_t absolute)
 static inline uint32_t
 refreshHz(void)
 {
+	if(gObservedRefreshHz>=1 && gObservedRefreshHz<=240)return gObservedRefreshHz;
 	return gRefreshHz >= 1 && gRefreshHz <= 240 ? gRefreshHz : kFBRefreshHz;
 }
 static inline uint32_t
@@ -196,6 +205,7 @@ recStep(void)
 {
 	return gRecStep >= 2 && gRecStep <= 8 ? gRecStep : 3;
 }
+#include "MarbleDisplayTiming.inc"
 #define REC_STEP        recStep()
 
 struct rec_header {
@@ -231,6 +241,9 @@ class IOMobileFramebuffer : public IOService
 public:
 	IOLock *        fLock;
 	uint8_t *       fBase;                  /* the boot framebuffer: the panel */
+	uint8_t *       fScanout;               /* hardware mode composes in RAM, copies here during blank */
+	uint64_t        fCopyBudget;
+	bool            fDisplayOn;             /* serialized with show by fLock; pixel blanking, not panel suspend */
 	uint32_t        fPanelWidth, fPanelHeight, fRowBytes;
 	uint32_t        fWidth, fHeight;        /* the display as user space sees it */
 	MiniIOSurface * fDefaultSurface;
@@ -300,8 +313,10 @@ public:
 	MiniIOSurface * defaultSurface(void);
 	void present(const uint8_t * swap);
 	void show(const uint8_t * swap, MiniIOSurface ** surfaces);
+	void displayPower(bool on);
 	void presenter(void);
 	static void presenterMain(void * self, wait_result_t result);
+	static void snapshotMain(void * self, wait_result_t result);
 	void reportFrameTimes(void);
 	void drawLayer(MiniIOSurface * s, const int32_t * src, const int32_t * dst);
 	void drawRows(const struct RowJob * job, int32_t y0, int32_t y1, uint32_t * blendRow);
@@ -403,6 +418,7 @@ IOMobileFramebuffer::start(IOService * provider)
 		return false;
 	}
 	fLock = IOLockAlloc();
+	fDisplayOn = true;
 	fSwapLock = IOLockAlloc();
 	if (kernel_thread_start(&IOMobileFramebuffer::presenterMain, this, &thread) != KERN_SUCCESS) {
 		IOLog("MiniIOMobileFramebuffer: no thread to put frames on the panel with\n");
@@ -421,17 +437,40 @@ IOMobileFramebuffer::start(IOService * provider)
 		thread_deallocate(thread);
 	}
 	fBase = (uint8_t *) vinfo.v_baseaddr;
+	if(gHardwareVSync==1 && gMarbleTiming.initialize())gObservedRefreshHz=gMarbleTiming.hz;
 	fPanelWidth = vinfo.v_width;
 	fPanelHeight = vinfo.v_height;
 	fRowBytes = vinfo.v_rowbytes;
+	if(gMarbleTiming.enabled()) {
+		uint8_t *composed=IONewZero(uint8_t,(size_t)fRowBytes*fPanelHeight);
+		if(composed) {
+			fScanout=fBase;fBase=composed;
+			memcpy(fBase,fScanout,(size_t)fRowBytes*fPanelHeight);
+			nanoseconds_to_absolutetime(2000000,&fCopyBudget);
+			IOLog("marble-present: staging ready=1 bytes=%llu blank_from_line=%u total_lines=%u scanout_address_unchanged=1\n",
+			    (uint64_t)fRowBytes*fPanelHeight,gMarbleTiming.activeLast+1,gMarbleTiming.totalLines);
+		} else IOLog("marble-present: staging allocation failed; hardware-counter pacing only\n");
+	}
+	/* A bounded headless idle experiment must not leave a static OLED image.
+	 * This blanks pixels, not the panel power rails; no unverified DSI/PMIC I/O. */
+	uint32_t blank = 0;
+	if (PE_parse_boot_argn("fb_blank", &blank, sizeof(blank)) && blank == 1) {
+		fGraphics = true;
+		PE_initialize_console(NULL, kPEGraphicsMode);
+		for (uint32_t y = 0; y < fPanelHeight; y++) {
+			bzero(fBase + (size_t)y * fRowBytes, (size_t)fPanelWidth * 4);
+			if(fScanout)bzero(fScanout+(size_t)y*fRowBytes,(size_t)fPanelWidth*4);
+		}
+		IOLog("marble-idle: boot framebuffer black; panel power unchanged\n");
+	}
 	fWidth = gFBWidth ? gFBWidth : fPanelWidth;
 	fHeight = gFBHeight ? gFBHeight : fPanelHeight;
 	if (gFBScale != 0 && gFBScale != kFBDefaultScale) {
 		static const char * const places[][2] = { { "/chosen", "display-scale" }, { "/product", "artwork-scale-factor" } };
 		uint32_t scale = gFBScale;
 
-		fWidth = kFBPointsWide * scale;
-		fHeight = kFBPointsHigh * scale;
+		fWidth = (scale==2 ? 414 : kFBPointsWide) * scale;
+		fHeight = (scale==2 ? 896 : kFBPointsHigh) * scale;
 		/* what the loader's device tree says about the scale is where MobileGestalt has it from */
 		for (unsigned i = 0; i < sizeof(places) / sizeof(places[0]); i++) {
 			IORegistryEntry * node = IORegistryEntry::fromPath(places[i][0], gIODTPlane);
@@ -443,6 +482,7 @@ IOMobileFramebuffer::start(IOService * provider)
 		}
 	}
 	fColumn = IONewZero(uint32_t, fPanelWidth);
+	if (fScanout && gMarbleTiming.enabled()) MarbleScaleConfigure(fPanelWidth,fPanelHeight);
 	fColumnWeight = IONewZero(uint16_t, fPanelWidth);
 	fDiff = gDiff != 0;
 	fDiffLeft = fDiffTop = ~0u;
@@ -461,9 +501,11 @@ IOMobileFramebuffer::start(IOService * provider)
 			fRecSize = (uint64_t) gRecMegabytes << 20;
 			fRecUsed = sizeof(*header);
 			bzero(header, sizeof(*header));
-			memcpy(header->magic, "RWREC003", 8);
-			header->width = fWidth / REC_STEP;
-			header->height = fHeight / REC_STEP;
+			/* v4 samples the completed multi-layer composition under fLock.
+			 * Preserve v3's source format for the legacy direct-display path. */
+			memcpy(header->magic, fScanout ? "RWREC004" : "RWREC003", 8);
+			header->width = (fScanout ? fPanelWidth : fWidth) / REC_STEP;
+			header->height = (fScanout ? fPanelHeight : fHeight) / REC_STEP;
 			loader_recording[0] = memory->getPhysicalSegment(0, NULL);
 			loader_recording[1] = fRecUsed;
 			loader_recording[2] = (uint64_t) (uintptr_t) fRecBase;
@@ -476,12 +518,29 @@ IOMobileFramebuffer::start(IOService * provider)
 	}
 
 	setProperty(kIOUserClientClassKey, "IOMobileFramebufferUserClient");
+	if(fScanout) {
+		marbleScanoutInitialize();
+		if(gMarbleScanout && kernel_thread_start(&IOMobileFramebuffer::snapshotMain,this,&thread)==KERN_SUCCESS) {
+			thread_set_thread_name(thread,"completed frame snapshots");thread_deallocate(thread);
+		} else if(gMarbleScanout) {
+			gMarbleScanout[1]=0;__asm__ volatile("dsb sy" ::: "memory");
+		}
+	}
 	/* for who draws with the GPU (userland/src/eagl.c): a frame need not be waited for before it is handed over */
 	setProperty("RedwoodWaitsForGPU", kOSBooleanTrue);
 	publishModes();
 	setName("disp0");
 	registerService();
 	return true;
+}
+
+static bool
+surfaceHolds(const MiniIOSurface * s, uint64_t rows, uint64_t columns)
+{
+	if (rows == 0 || columns == 0) {
+		return true;
+	}
+	return (uint64_t) s->info.offset + (rows - 1) * s->info.bytesPerRow + columns * 4 <= s->info.allocSize;
 }
 
 /* Keep a small copy of the frame that is about to be shown (the surface is the whole screen). */
@@ -496,7 +555,11 @@ IOMobileFramebuffer::record(MiniIOSurface * s)
 	if (fFirstFrame == 0) {
 		fFirstFrame = now;
 	}
-	if (fRecBase == NULL || fRecDone || s->info.width < fWidth || s->info.height < fHeight) {
+	if (fRecBase == NULL || fRecDone || (!fScanout &&
+	    (s == NULL || s->info.width < fWidth || s->info.height < fHeight))) {
+		return;
+	}
+	if (!fScanout && !surfaceHolds(s, fHeight, fWidth)) {
 		return;
 	}
 	absolutetime_to_nanoseconds(now - fFirstFrame, &since_first);
@@ -528,7 +591,9 @@ IOMobileFramebuffer::record(MiniIOSurface * s)
 	frame->nanoseconds = since_start;
 	to = (uint8_t *) (frame + 1);
 	for (uint32_t y = 0; y < header->height; y++) {
-		const uint32_t * from = (const uint32_t *) (s->pixels() + (size_t) (y * REC_STEP + 1) * s->info.bytesPerRow);
+		const uint8_t *pixels = fScanout ? fBase : s->pixels();
+		uint32_t stride = fScanout ? fRowBytes : s->info.bytesPerRow;
+		const uint32_t * from = (const uint32_t *) (pixels + (size_t) (y * REC_STEP + 1) * stride);
 
 		for (uint32_t x = 0; x < header->width; x++) {
 			uint32_t pixel = from[x * REC_STEP + 1];        /* B G R A in memory */
@@ -592,10 +657,13 @@ sample_at(int64_t i, int64_t in, int64_t out)
  * scaling a whole frame takes one processor some 9 ms, so with boot-arg fb_threads=N it is shared
  * out between N of them, each with rows of its own and a row of blending of its own.
  */
+#define DST_LIMIT (1 << 24)
+
 struct RowJob {
 	const uint8_t * pixels;
 	uint32_t        stride;
 	int32_t         sx, sy, sw, sh, px0, py0, px1, py1, cx0, cx1;
+	int32_t         ry0, ry1;       /* the rows of the rectangle that are on the panel: all that is looked at, whatever its size */
 	bool            filter, unscaled;
 };
 
@@ -605,7 +673,7 @@ IOMobileFramebuffer::drawRows(const RowJob * job, int32_t y0, int32_t y1, uint32
 	const uint8_t * pixels = job->pixels;
 	uint32_t stride = job->stride;
 	int32_t sx = job->sx, sy = job->sy, sw = job->sw, sh = job->sh;
-	int32_t px0 = job->px0, py0 = job->py0, px1 = job->px1, py1 = job->py1, cx0 = job->cx0, cx1 = job->cx1;
+	int32_t px0 = job->px0, py0 = job->py0, py1 = job->py1, cx0 = job->cx0, cx1 = job->cx1;
 	bool filter = job->filter;
 
 	for (int32_t y = y0; y < y1; y++) {
@@ -700,9 +768,9 @@ IOMobileFramebuffer::helperMain(void * self, wait_result_t result __unused)
 		job = fb->fHelperJob;
 		IOLockUnlock(fb->fHelperLock);
 		/* share index + 1 of fThreads (the presenter takes share 0) */
-		rows = job->py1 - job->py0;
-		y0 = job->py0 + (int32_t) ((int64_t) rows * (index + 1) / fb->fThreads);
-		y1 = job->py0 + (int32_t) ((int64_t) rows * (index + 2) / fb->fThreads);
+		rows = job->ry1 - job->ry0;
+		y0 = job->ry0 + (int32_t) ((int64_t) rows * (index + 1) / fb->fThreads);
+		y1 = job->ry0 + (int32_t) ((int64_t) rows * (index + 2) / fb->fThreads);
 		blend = fb->fHelperBlend[index];
 		fb->drawRows(job, y0, y1, blend);
 		IOLockLock(fb->fHelperLock);
@@ -738,15 +806,36 @@ IOMobileFramebuffer::drawLayer(MiniIOSurface * s, const int32_t * src, const int
 		dw = (int32_t) fWidth;
 		dh = (int32_t) fHeight;
 	}
-	if (sx < 0 || sy < 0 || (uint32_t) (sx + sw) > s->info.width || (uint32_t) (sy + sh) > s->info.height) {
+	if (sw <= 0 || sh <= 0 || sx < 0 || sy < 0 ||
+	    (uint64_t) sx + (uint32_t) sw > s->info.width ||
+	    (uint64_t) sy + (uint32_t) sh > s->info.height) {
 		return;
 	}
-	/* the rectangle on the panel */
-	px0 = (int32_t) ((int64_t) dx * fPanelWidth / fWidth);
-	py0 = (int32_t) ((int64_t) dy * fPanelHeight / fHeight);
-	px1 = (int32_t) ((int64_t) (dx + dw) * fPanelWidth / fWidth);
-	py1 = (int32_t) ((int64_t) (dy + dh) * fPanelHeight / fHeight);
+	/* the rows and columns named must be in the surface's memory, whatever stride and size it was made with */
+	if (!surfaceHolds(s, (uint32_t) (sy + sh), (uint32_t) (sx + sw))) {
+		return;
+	}
+	/*
+	 * the rectangle on the panel, worked out in 64 bits: the request's numbers are the caller's, and a
+	 * rectangle of billions of rows is not drawn (nor looked at row by row)
+	 */
+	int64_t qx0 = (int64_t) dx * fPanelWidth / fWidth;
+	int64_t qy0 = (int64_t) dy * fPanelHeight / fHeight;
+	int64_t qx1 = ((int64_t) dx + dw) * fPanelWidth / fWidth;
+	int64_t qy1 = ((int64_t) dy + dh) * fPanelHeight / fHeight;
+
+	if (qx0 < -DST_LIMIT || qy0 < -DST_LIMIT || qx1 > DST_LIMIT || qy1 > DST_LIMIT) {
+		return;
+	}
+	px0 = (int32_t) qx0;
+	py0 = (int32_t) qy0;
+	px1 = (int32_t) qx1;
+	py1 = (int32_t) qy1;
 	if (px1 <= px0 || py1 <= py0) {
+		return;
+	}
+	/* nothing of it on the panel: nothing to draw (and the columns below are only worked out for ones that are) */
+	if (px1 <= 0 || px0 >= (int32_t) fPanelWidth || py1 <= 0 || py0 >= (int32_t) fPanelHeight) {
 		return;
 	}
 	/* (blending, a row of the picture mixed from two: room for it, for every one who draws rows) */
@@ -761,14 +850,24 @@ IOMobileFramebuffer::drawLayer(MiniIOSurface * s, const int32_t * src, const int
 		}
 		fBlendRowSize = (uint32_t) sw;
 		fBlendRow = IONew(uint32_t, fBlendRowSize);
+		bool allocated = fBlendRow != NULL;
+
 		for (unsigned i = 0; i + 1 < fThreads; i++) {
 			fHelperBlend[i] = IONew(uint32_t, fBlendRowSize);
-			if (fHelperBlend[i] == NULL && fBlendRow != NULL) {
+			allocated = allocated && fHelperBlend[i] != NULL;
+		}
+		if (!allocated) {
+			/* every array that did get made is given back at the size it was made with, so that no later growth frees one with the wrong size */
+			if (fBlendRow != NULL) {
 				IODelete(fBlendRow, uint32_t, fBlendRowSize);
 				fBlendRow = NULL;
 			}
-		}
-		if (fBlendRow == NULL) {
+			for (unsigned i = 0; i + 1 < fThreads; i++) {
+				if (fHelperBlend[i] != NULL) {
+					IODelete(fHelperBlend[i], uint32_t, fBlendRowSize);
+					fHelperBlend[i] = NULL;
+				}
+			}
 			fBlendRowSize = 0;
 		}
 	}
@@ -798,10 +897,12 @@ IOMobileFramebuffer::drawLayer(MiniIOSurface * s, const int32_t * src, const int
 	job.py1 = py1;
 	job.cx0 = cx0;
 	job.cx1 = cx1;
+	job.ry0 = py0 < 0 ? 0 : py0;
+	job.ry1 = py1 > (int32_t) fPanelHeight ? (int32_t) fPanelHeight : py1;
 	job.filter = filter;
 	job.unscaled = px1 - px0 == sw && py1 - py0 == sh && px0 >= 0 && (uint32_t) px1 <= fPanelWidth;
 	if (fThreads <= 1 || fDiff || fHelpersStarted + 1 < fThreads) {
-		drawRows(&job, py0, py1, fBlendRow);
+		drawRows(&job, job.ry0, job.ry1, fBlendRow);
 		return;
 	}
 	/* shared out: the helpers take their rows, this thread the first share, then waits for them */
@@ -811,7 +912,7 @@ IOMobileFramebuffer::drawLayer(MiniIOSurface * s, const int32_t * src, const int
 	fHelperGeneration++;
 	IOLockWakeup(fHelperLock, &fHelperGeneration, false);
 	IOLockUnlock(fHelperLock);
-	drawRows(&job, py0, py0 + (int32_t) ((int64_t) (py1 - py0) / fThreads), fBlendRow);
+	drawRows(&job, job.ry0, job.ry0 + (int32_t) ((int64_t) (job.ry1 - job.ry0) / fThreads), fBlendRow);
 	IOLockLock(fHelperLock);
 	while (fHelpersBusy != 0) {
 		IOLockSleep(fHelperLock, &fHelpersBusy, THREAD_UNINT);
@@ -904,6 +1005,20 @@ IOMobileFramebuffer::presenterMain(void * self, wait_result_t result __unused)
 }
 
 void
+IOMobileFramebuffer::snapshotMain(void * self, wait_result_t result __unused)
+{
+	IOMobileFramebuffer *fb=(IOMobileFramebuffer *)self;
+	for(;;) {
+		if(marbleSnapshotPending()) {
+			IOLockLock(fb->fLock);
+			marbleSnapshotCapture(fb->fBase,(size_t)fb->fRowBytes*fb->fPanelHeight,fb->fDisplayOn);
+			IOLockUnlock(fb->fLock);
+		}
+		IOSleep(20);
+	}
+}
+
+void
 IOMobileFramebuffer::presenter(void)
 {
 	static uint8_t swap[SWAP_SIZE];         /* (one thread) */
@@ -932,7 +1047,7 @@ void
 IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 {
 	uint32_t set = swapWord(swap, SWAP_LAYERS_SET);
-	uint64_t began = mach_absolute_time(), nanos, ready, shown, drawn;
+	uint64_t began = mach_absolute_time(), nanos, ready, shown, drawn, pacingWait=0;
 	uint32_t layers = 0;
 	MiniIOSurface * recorded = NULL;
 	bool report;
@@ -945,7 +1060,13 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 	}
 	fStatWaiting += mach_absolute_time() - began;
 	began = ready = mach_absolute_time();
-	if (gOnTheBeat) {
+	if(gMarbleTiming.enabled() && !fScanout) {
+		if(gMarbleTiming.waitNext()) {
+			fStatOnBeat++;
+			fStatBeatWait+=mach_absolute_time()-began;
+			began=mach_absolute_time();
+		}
+	} else if (gOnTheBeat && !fScanout) {
 		uint64_t period, aim, next;
 
 		nanoseconds_to_absolutetime(NSEC_PER_SEC / refreshHz(), &period);
@@ -1036,14 +1157,53 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 				fGraphics = true;
 				PE_initialize_console(NULL, kPEGraphicsMode);
 			}
-			drawLayer(s, src, dst);
+			/* The worker receives an actual retained swap, never a guessed
+			 * association with an earlier render flush. Partial/multiple layers
+			 * keep the established CPU composition path. */
+			bool single=layer==0;
+			for(unsigned other=1;other<SWAP_LAYERS;other++)
+				if(swapWord(swap,SWAP_SURFACE(other)))single=false;
+			bool fullSource=(src[2]<=0 || src[3]<=0) ||
+			    (!src[0] && !src[1] && src[2]==(int32_t)s->info.width && src[3]==(int32_t)s->info.height);
+			bool fullDest=(dst[2]<=0 || dst[3]<=0) ||
+			    (!dst[0] && !dst[1] && dst[2]==(int32_t)fWidth && dst[3]==(int32_t)fHeight);
+			MiniIOSurface *scaled=nullptr;
+			if(fScanout && fDisplayOn && single && fullSource && fullDest &&
+			    s->info.pixelFormat==0x42475241 && !s->info.offset &&
+			    marble_scale_layout(s->info.width,s->info.height,s->info.bytesPerRow,s->info.allocSize))
+				scaled=MarbleScaleFrame(s,swapWord(swap,SWAP_ID));
+			if(scaled) {
+				for(uint32_t y=0;y<fPanelHeight;y++)
+					memcpy(fBase+(size_t)y*fRowBytes,scaled->pixels()+(size_t)y*scaled->info.bytesPerRow,(size_t)fPanelWidth*4);
+				MiniIOSurfaceDrop(scaled);
+			} else drawLayer(s, src, dst);
 			if (layer == 0) {
 				recorded = s;   /* (recorded once the frame is in the panel's memory: see below) */
 			}
 		}
 	}
 	drawn = mach_absolute_time();
-	if (recorded != NULL) {
+	if(fScanout && fDisplayOn) {
+		uint32_t frame=0,line=0;
+		uint64_t waiting=mach_absolute_time();
+		bool blank=gMarbleTiming.waitBlank(fCopyBudget,frame,line);
+		if(blank) {
+			fStatOnBeat++;fStatBeatWait+=mach_absolute_time()-waiting;
+		} else IOLog("marble-present: blank deadline unavailable; unsynchronized fallback\n");
+		shown=mach_absolute_time();
+		pacingWait=shown-waiting;
+		marbleScanoutBegin();
+		memcpy(fScanout,fBase,(size_t)fRowBytes*fPanelHeight);
+		__asm__ volatile("dsb st" ::: "memory");
+		marbleScanoutEnd();
+		drawn=mach_absolute_time();
+		uint64_t elapsed=drawn-shown,margin;
+		nanoseconds_to_absolutetime(500000,&margin);
+		uint64_t available=gMarbleTiming.period*(gMarbleTiming.totalLines-gMarbleTiming.activeLast-8)/gMarbleTiming.totalLines;
+		if(elapsed+margin>fCopyBudget)fCopyBudget=elapsed+margin<available?elapsed+margin:available*3/4;
+		if(blank)gMarbleTiming.copied(frame,line,elapsed);
+	}
+	if (fScanout || recorded != NULL) {
 		record(recorded);
 	}
 	fSwapsShown++;
@@ -1060,12 +1220,13 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 
 	/* every five seconds in which something was drawn: how many frames, and what each cost here */
 	fStatFrames++;
-	fStatDrawing += mach_absolute_time() - began;
+	fStatDrawing += mach_absolute_time() - began - pacingWait;
 	if (fStatSince == 0) {
 		fStatSince = began;
 	}
 	absolutetime_to_nanoseconds(mach_absolute_time() - fStatSince, &nanos);
 	if (nanos >= 5 * NSEC_PER_SEC) {
+		gMarbleTiming.report();
 		uint64_t drawing, waiting, beat;
 		unsigned different;
 
@@ -1112,6 +1273,32 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
+/* Observed iOS 16.5 selector12 states: 0=off, 1=on. Hold the same lock
+ * as the presenter: delayed swaps may update staging while off, never scanout.
+ * Do not restore a pre-lock image on wake; the next completed swap supplies it.
+ * This blanks OLED pixels only; firmware panel/SoC power state is unchanged. */
+void
+IOMobileFramebuffer::displayPower(bool on)
+{
+	IOLockLock(fLock);
+	if(fScanout && fDisplayOn!=on) {
+		fDisplayOn=on;
+		if(!on) {
+			uint32_t frame=0,line=0;
+			bool blank=gMarbleTiming.waitBlank(fCopyBudget,frame,line);
+			uint64_t start=mach_absolute_time();
+			marbleScanoutBegin();
+			bzero(fScanout,(size_t)fRowBytes*fPanelHeight);
+			__asm__ volatile("dsb st" ::: "memory");
+			marbleScanoutEnd();
+			if(blank)gMarbleTiming.copied(frame,line,mach_absolute_time()-start);
+			else IOLog("marble-display-power: blank deadline unavailable; unsynchronized blackout\n");
+		}
+		IOLog("marble-display-power: on=%u pixel_blank=%u panel_power_unchanged=1\n",on?1:0,on?0:1);
+	}
+	IOLockUnlock(fLock);
+}
+
 class IOMobileFramebufferUserClient : public IOUserClient
 {
 	OSDeclareDefaultStructors(IOMobileFramebufferUserClient);
@@ -1125,6 +1312,9 @@ class IOMobileFramebufferUserClient : public IOUserClient
 	thread_call_t           fVSyncCall;
 	uint64_t                fVSyncCount;
 	uint64_t                fVSyncTime;             /* when the refresh being waited for is due */
+	uint32_t                fHardwareFrame;
+	bool                    fHardwareObserved;
+	uint64_t                fHardwareSeenAt;
 	bool                    fVSyncRunning;
 	bool                    fClosed;
 
@@ -1237,6 +1427,12 @@ IOMobileFramebufferUserClient::armVSync(void)
 
 	/* one refresh after the last, not after whenever we got round to this: the rate does not drift */
 	nanoseconds_to_absolutetime(NSEC_PER_SEC / refreshHz(), &period);
+	if(gMarbleTiming.enabled()) {
+		uint64_t early;nanoseconds_to_absolutetime(500000,&early);
+		/* Wake slightly before the predicted edge, then observe the actual
+		 * counter. This keeps polling lateness from accumulating as drift. */
+		period=gMarbleTiming.period>early?gMarbleTiming.period-early:gMarbleTiming.period;
+	}
 	fVSyncTime += period;
 	if (fVSyncTime <= now || fVSyncTime > now + 2 * period) {
 		fVSyncTime = now + period;
@@ -1261,7 +1457,26 @@ IOMobileFramebufferUserClient::vsync(void)
 	if (fClosed || fCallbacks[kFBNotifyVSync] == 0 || fPorts[kFBNotifyVSync] == NULL) {
 		fVSyncRunning = false;
 	} else {
+		if(gMarbleTiming.enabled()) {
+			uint32_t frame=gMarbleTiming.reg(0xac);
+			uint64_t observed=mach_absolute_time();
+			if(fHardwareObserved && frame==fHardwareFrame) {
+				if(observed-fHardwareSeenAt>gMarbleTiming.period*3) {
+					IOLog("marble-display: notification counter stale; hardware sync disabled\n");
+					gMarbleTiming.disable();
+					fVSyncRunning=false;IOLockUnlock(fLock);return;
+				} else {
+					uint64_t retry;nanoseconds_to_absolutetime(500000,&retry);
+					thread_call_enter_delayed(fVSyncCall,observed+retry);
+					IOLockUnlock(fLock);return;
+				}
+			} else {
+				fHardwareObserved=true;fHardwareFrame=frame;fHardwareSeenAt=observed;
+				now=fVSyncTime=observed;
+			}
+		}
 		fVSyncCount++;
+		if(gMarbleTiming.enabled())gMarbleTiming.notifications++;
 		setAsyncReference64(ref, fPorts[kFBNotifyVSync], fCallbacks[kFBNotifyVSync], fRefcons[kFBNotifyVSync], fTask);
 		args[0] = (uint32_t) now;
 		args[1] = now >> 32;
@@ -1361,8 +1576,12 @@ IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMetho
 	case kFBMethodSwapSignal:
 	case kFBMethodSwapCancel:
 	case kFBMethodSwapCancelAll:
-	case kFBMethodRequestPowerChange:
 	case kFBMethodChangeFrameInfo:
+		return kIOReturnSuccess;
+
+	case kFBMethodRequestPowerChange:
+		if(args->scalarInputCount!=1 || in[0]>1)return kIOReturnBadArgument;
+		fOwner->displayPower(in[0]!=0);
 		return kIOReturnSuccess;
 
 	case kFBMethodNotifications:                    /* in: callback (0 = off), its argument, type, 0 */

@@ -115,6 +115,7 @@ bool redwood_gpu_map(uint64_t address, uint64_t phys, bool read_only);
 void redwood_gpu_mapped(void);
 void redwood_gpu_unmap(uint64_t address, uint64_t size);
 void redwood_gpu_to_memory(void *start, uint64_t size);
+bool redwood_gpu_to_memory_fenced(void *start, uint64_t size, uint32_t last_use);
 uint32_t redwood_gpu_submit(const uint64_t *addresses, const uint32_t *words, uint32_t count);
 bool redwood_gpu_done(uint32_t fence);
 uint32_t redwood_gpu_last(void);

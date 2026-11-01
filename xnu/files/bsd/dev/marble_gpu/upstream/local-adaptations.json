@@ -1,0 +1,48 @@
+{
+  "base_repository": "https://github.com/UniXNU/AdrenoFirmware",
+  "base_commit": "40fdb8ea87606612ac6f1e80bbb49955d0ce4051",
+  "reason": "Explicit marble KGSL Gen7 queue profile plus real typed ACK diagnostics, preserving original default transport profile",
+  "wire_source": "MiCode/Xiaomi_Kernel_OpenSource 48952ed36228217531482b39d5bef13e7fd808ec drivers/gpu/msm/adreno_hfi.h and adreno_gen7_hfi.c",
+  "patch": "xnu/marble-hfi-profile.patch",
+  "patch_sha256": "f5eea9f3bde54a422da5786863e83abea2311b56138554b1864f65e2172068b5",
+  "files": [
+    {
+      "path": "AdrenoHfi.c",
+      "upstream_sha256": "5d7da3145157fd945d626d4567c95626fdbbc8fb6a65d8f67701ffb1e64f7d2e",
+      "adapted_sha256": "1ef251cd8fd7c8cec12a4749576a21b550ebc32a8ed4f0f9b56786ba72887d46"
+    },
+    {
+      "path": "AdrenoHfi.h",
+      "upstream_sha256": "615cb21d1c7bd3729e3b36d361f0f78bbaacb1bd8931a268797e00505e05f0b8",
+      "adapted_sha256": "87a5397e4dcf89cd0e0563da48c418bbbf23478b9f88c96398183ed03f19d15a"
+    }
+  ],
+  "table_adaptation": {
+    "reason": "Explicit marble Gen7 CPU-only performance/bandwidth encoding; original Sheng defaults preserved; no marble startup runner",
+    "wire_source": "MiCode/Xiaomi_Kernel_OpenSource 48952ed36228217531482b39d5bef13e7fd808ec drivers/gpu/msm/adreno_gen7_rpmh.c and adreno_hfi.h",
+    "patch": "xnu/marble-gen7-votes.patch",
+    "patch_sha256": "ed31f8a0b87ee80f77c0e811a7b0447b427abb9c7122accd8d8744f9dd136088",
+    "files": [
+      {
+        "path": "AdrenoHfiVotes.h",
+        "upstream_sha256": "6e8e89a0b947868f103b241ca86e3c25aa6229a54bc581022728b4eda9070f4c",
+        "adapted_sha256": "3a867924a15896795e4c0017434f0dab81837cb274a002b6ccccb6493e219290"
+      },
+      {
+        "path": "AdrenoHfiVotes.c",
+        "upstream_sha256": "20f021f8eeb9d32def09c3d5d58c6fd97e96b77932113f373d634ab6d184abda",
+        "adapted_sha256": "b7f033550f944217adcb4fde26e4e061df08d6bdd4b4700b78077723d3efe2a7"
+      },
+      {
+        "path": "AdrenoHfiStartup.h",
+        "upstream_sha256": "03878418998c4e75ccf5a3ee9112631f676ae5a604cb453c52ea480e0826f4e1",
+        "adapted_sha256": "755681208d15b5d34e35cf235bb7c192aab4629896b86dcdcb052b64e4c6f110"
+      },
+      {
+        "path": "AdrenoHfiStartup.c",
+        "upstream_sha256": "0bdc60bb35aae37e01a2466e6ecf95ed7c444389526ec8471e2a2422624a6c81",
+        "adapted_sha256": "5c4e5c0ac2deb0e8790b39a6bcbde0338a28fda0f11a6370be0cfcd548ea5e3c"
+      }
+    ]
+  }
+}

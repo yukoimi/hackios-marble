@@ -1,0 +1,437 @@
+{
+  "scope": "Metadata only; no firmware payloads",
+  "files": [
+    {
+      "path": "gpu-material/gpu-details.txt",
+      "bytes": 16726,
+      "sha256": "e86e7c62aebaad7f2623c237355d353f8c630c9f4b71b1d189e5cf34fa2a5dd4",
+      "kind": "GPU reference material"
+    },
+    {
+      "path": "gpu-material/vendor/build.prop",
+      "bytes": 25661,
+      "sha256": "359569577e269922f8ff6036e137c9aaf841bbe142e81f01e19e7c77270f4300",
+      "kind": "GPU reference material"
+    },
+    {
+      "path": "gpu-material/vendor/firmware/a730_sqe.fw",
+      "bytes": 74676,
+      "sha256": "e67d1829f57fc8326d806234b932dc3b78e28a9940df34c70752f17d5f38b7aa",
+      "kind": "GPU reference material"
+    },
+    {
+      "path": "gpu-material/vendor/firmware/a730_zap.b00",
+      "bytes": 148,
+      "sha256": "9cd65a08fa2ce72c05a52aad95951f749f52fc310613a2857e270b463a641a7f",
+      "kind": "GPU reference material"
+    },
+    {
+      "path": "gpu-material/vendor/firmware/a730_zap.b01",
+      "bytes": 2236,
+      "sha256": "1fc98f97cf354b9704b20d0848f7b2739638539a57d88ecf5cc71ca1c5c4e6b9",
+      "kind": "GPU reference material"
+    },
+    {
+      "path": "gpu-material/vendor/firmware/a730_zap.b02",
+      "bytes": 3896,
+      "sha256": "41a11d0a7c9a6dd523bc1da3fdbeb887f04a9295072391fcdd4b8b71f713fedc",
+      "kind": "GPU reference material"
+    },
+    {
+      "path": "gpu-material/vendor/firmware/a730_zap.elf",
+      "bytes": 6332,
+      "sha256": "b4fc62da3de90d50228815b016b2eafef7bf6bc6854bf24f8d721b9ee9bef5bd",
+      "kind": "GPU reference material"
+    },
+    {
+      "path": "gpu-material/vendor/firmware/a730_zap.mbn",
+      "bytes": 12088,
+      "sha256": "66fa41f0f55324571fc459a756008754e18fea3b55ace136b06abaa60eb3aeb0",
+      "kind": "GPU reference material"
+    },
+    {
+      "path": "gpu-material/vendor/firmware/a730_zap.mdt",
+      "bytes": 4044,
+      "sha256": "b957876634e6a9eab17ae39912ea3b4cb5ba811d0720b04ba0590e118c3cd46a",
+      "kind": "GPU reference material"
+    },
+    {
+      "path": "gpu-material/vendor/firmware/gmu_gen70000.bin",
+      "bytes": 57272,
+      "sha256": "b2d3f0e2a98fd6259ab9ffef16df63265542e6cc9a970d53d476e823d432042a",
+      "kind": "GPU reference material"
+    },
+    {
+      "path": "gpu-material/vendor/lib64/egl/libEGL_adreno.so",
+      "bytes": 44024,
+      "sha256": "c4886ee39893747a9dd1f8df32a20feba1fa337cafcfaefd25b5a9711ca0bcc0",
+      "kind": "GPU reference material"
+    },
+    {
+      "path": "gpu-material/vendor/lib64/egl/libGLESv2_adreno.so",
+      "bytes": 5730376,
+      "sha256": "b89a0cdce3eac35a3d5c3cabd0a448a4a11bcece58dd0f4ac30e10aa9b2a1e0e",
+      "kind": "GPU reference material"
+    },
+    {
+      "path": "gpu-material/vendor/lib64/hw/vulkan.adreno.so",
+      "bytes": 4044720,
+      "sha256": "50a7107429b89d6401ab359a713ea33dc0365b085f66c4686c9cf3d87d4fc19f",
+      "kind": "GPU reference material"
+    },
+    {
+      "path": "gpu-material/vendor_dlkm/lib/modules/gpucc-diwali.ko",
+      "bytes": 41432,
+      "sha256": "385de9c1225bb8189bd51b34b1dc904a1796b4357701fe8cd22a4cf28e44b3bc",
+      "kind": "GPU reference material"
+    },
+    {
+      "path": "gpu-material/vendor_dlkm/lib/modules/gpucc-waipio.ko",
+      "bytes": 54288,
+      "sha256": "537806d8805ec7ce41181aa9c801d4ee8be11326d2ccdc552c775f61e639f913",
+      "kind": "GPU reference material"
+    },
+    {
+      "path": "gpu-material/vendor_dlkm/lib/modules/msm_kgsl.ko",
+      "bytes": 2815104,
+      "sha256": "debf973e8ca6704bb840310d3026d64a38e8aaf09935cd0c465f4eee0c87980b",
+      "kind": "GPU reference material"
+    },
+    {
+      "path": "daily-material/firmware/image/adsp2.b00",
+      "bytes": 916,
+      "sha256": "237001e58c5050ab8637fdabb9336841dbe85d6772b1c7c8b21806e0be4cd873",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/adsp2.b01",
+      "bytes": 6760,
+      "sha256": "4ed4882e3ba5cf1bfd0975e8301e3922c6ee18c0247d5d4de709c1eefc5d632a",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/adsp2.b02",
+      "bytes": 2692644,
+      "sha256": "bd82b465e10c11312ba765a06c47c33a0a7047309d8ae5f34fe85cdcb15ccd07",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/adsp2.b03",
+      "bytes": 25848,
+      "sha256": "5da5f260b596f7dec24d812e7aed63ea51c2df8ac868a9bf949fd8593e87c5b2",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/adsp2.b04",
+      "bytes": 34632,
+      "sha256": "63b4a31546c755a9af7c3e4cf3320f896c39e0bf5b05eed2fea41353b1b2b71b",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/adsp2.b05",
+      "bytes": 376832,
+      "sha256": "6c55d61bd2dd118c142aba8aba4223aa77d70bc62960918de3d787690abfda90",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/adsp2.b06",
+      "bytes": 220,
+      "sha256": "ba44e20e02514f0aa0d2ae12eb68f003aecedde9d4decbc908107a2d7b5a6e7c",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/adsp2.b07",
+      "bytes": 4892,
+      "sha256": "6ede75d3bddf0072a1cc8dbf2d58904df36768e71fb060f9bea91bc8e2745703",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/adsp2.b08",
+      "bytes": 2287720,
+      "sha256": "d787dde2206e9a09cf1777d4c4e958d78fd3cdae2848191eee5311057afec750",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/adsp2.b09",
+      "bytes": 237576,
+      "sha256": "1d0364b803d1bff509a4d25922c0e78d1023716a9d30f33272107a0d2e522d72",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/adsp2.b10",
+      "bytes": 720,
+      "sha256": "2dd820156d2e4394aab396a5f7bb1c0266abfe42eefd4ae8115234a5236b0ffc",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/adsp2.b11",
+      "bytes": 10056,
+      "sha256": "9e3638e5c66be7b3d3e07f28d82d9b52463cdf6345ee987085fbb9ae528105a8",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/adsp2.b12",
+      "bytes": 132064,
+      "sha256": "9b079f373aa182c526c0f3491884bd211f422446fbdd28488f67a0bb3e27ef2e",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/adsp2.b13",
+      "bytes": 83412,
+      "sha256": "65c1c5127d0205d6ef2296b8736a445555b6b497f8c8647b39461df7d9b8ec2a",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/adsp2.b14",
+      "bytes": 316424,
+      "sha256": "245338b35ab05472dbe9abfc9994b5ffc9c6da7c1070696146ada1310ab1d935",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/adsp2.b15",
+      "bytes": 3359844,
+      "sha256": "c83a015e8f2121a8c5ee3f4e6e6b7f411a630b254211a7a78ff36397573b9ccc",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/adsp2.b16",
+      "bytes": 108020,
+      "sha256": "dc2b57df1e41d956653f8aac95831b56d74ee50e6ee50843bcc9212576b4ae1d",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/adsp2.b17",
+      "bytes": 280,
+      "sha256": "9737fc63e64d1cca0fd2d33ddbeb9e20a0ea3d01d18a33cbec4e749f054397d8",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/adsp2.b18",
+      "bytes": 212872,
+      "sha256": "572e9635d38e4c19847e4135236ccde07de65ff2d253e9874cd676db82d28ec3",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/adsp2.b19",
+      "bytes": 11488088,
+      "sha256": "0c55e1800985c27d5c881ddc993d8f99e16bf7a619728e848d5a0a68bd44ef24",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/adsp2.b20",
+      "bytes": 507912,
+      "sha256": "e9d40ca8aa1964ee9238f50038b2ff75a01d2b8ec785e43af385c235fc4c4e04",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/adsp2.b21",
+      "bytes": 1936,
+      "sha256": "7412cb75f15c2948c676418bb125a648ee0665a48c501e30e026088151873c21",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/adsp2.b22",
+      "bytes": 173716,
+      "sha256": "e2ab314e622f856bca63f07cd8c3fa9da365bced9086fb6e503fd3795a129e30",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/adsp2.b23",
+      "bytes": 87848,
+      "sha256": "a28c4b31f643a04204299b36f03de2232bc87b419ee6d7053f2e98ee15828902",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/adsp2.b24",
+      "bytes": 562204,
+      "sha256": "a7a585af52d68cccc30a4590d84ab206f989a102cbaf60a6ec497aa759fd4d71",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/adsp2.b26",
+      "bytes": 5048,
+      "sha256": "f43f2fb757d2e31e13417c17321552eeb2c9caaf7540726229dbe10e74f5159f",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/adsp2.mdt",
+      "bytes": 5964,
+      "sha256": "26f3b2ed01822bf0a48129dc286a148cd7a5c9c765f370f28da8ddc1451c9be4",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/adspr.jsn",
+      "bytes": 513,
+      "sha256": "66ce8531efb7979d234e0f0eabbe18d038ac97da771a8a194f613df8f0724e81",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/adspua.jsn",
+      "bytes": 703,
+      "sha256": "982a99853495e34726b8e44697fdfad303334de0a67cbf6cde306c8f1731000b",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/battmgr.jsn",
+      "bytes": 516,
+      "sha256": "be8c6fba330908e4683fb6282761cb08485a302d6a66e09721e102e342f27236",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/slpi2.b00",
+      "bytes": 820,
+      "sha256": "defb24f7d2c6337390c374622105c9ceae712ff750b9b39649f156e098671b82",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/slpi2.b01",
+      "bytes": 6952,
+      "sha256": "d61137a7e815296a9f37331ff168e78dd33c42ba8abc445005c32134cfc72292",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/slpi2.b02",
+      "bytes": 1453668,
+      "sha256": "3d4c4e165393e50decd6609ace4696c5f811e71a84bcdbb98a4aa829d40800cd",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/slpi2.b03",
+      "bytes": 26264,
+      "sha256": "a30110c4e071c02e54f605024280261dc51328fad46974a4680291792ac3a70f",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/slpi2.b04",
+      "bytes": 26440,
+      "sha256": "c5f1a3cbfb75d9215210f2c2e7b0ac30f2ce301ac2009359517bd500b117c3c3",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/slpi2.b05",
+      "bytes": 310412,
+      "sha256": "3f8421f99ea5085dac7f19aa0857b42090d996b51e3c0cca50ed18986eecea51",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/slpi2.b06",
+      "bytes": 220,
+      "sha256": "d71eb24525bc365df0fb777a465adb6a77f057fa8f09b5633bae6e21ed9468e5",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/slpi2.b07",
+      "bytes": 5156,
+      "sha256": "68e0d0d4116d1a41170243a9bc425fb34c093bf1d938bb58e2203ec02eb93fb5",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/slpi2.b08",
+      "bytes": 1946468,
+      "sha256": "e1fe9e13f9d4f36cef930deba50e618cf603c05543553ddded6c8b8934ba2026",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/slpi2.b09",
+      "bytes": 258056,
+      "sha256": "d348a2063beaca7fa6482bb11310cc19197029c61bebc96aeec3adb3ee923420",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/slpi2.b10",
+      "bytes": 74692,
+      "sha256": "c94e144ae05dc484bb6969ddc02119ac1f594c061623d798af0b508d04a9e1ea",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/slpi2.b11",
+      "bytes": 127988,
+      "sha256": "feaa1ac020215421abd230acc2005433aeff271e451d3780f763622d869e5fcb",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/slpi2.b12",
+      "bytes": 121500,
+      "sha256": "5b1e2105b8161e46baddc4d1a16dedaf3c428c80a0a5db9c56e3d7241192fbb4",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/slpi2.b13",
+      "bytes": 1825484,
+      "sha256": "e59da76a41c1e38bdbc7588770c91d413f1e9fb9eccf948a8718b07ebac65623",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/slpi2.b14",
+      "bytes": 53252,
+      "sha256": "45477588361ed1bbe2172c0873c261ca0b5abe068d944b906aeca961e911c86c",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/slpi2.b15",
+      "bytes": 17594,
+      "sha256": "55f6089d40aaa58202cc7872cb4dfd74b44a30d8e95b764085650390f5d6bf81",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/slpi2.b16",
+      "bytes": 214968,
+      "sha256": "3c3909a8a939b560380e981937d7ccf613fe647914831102514b42b39fc2dbc5",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/slpi2.b17",
+      "bytes": 53508,
+      "sha256": "fb9f99ef15425bdc70b854af14efc7a339d0c9c1d03294c4d41dbc66812c4d29",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/slpi2.b18",
+      "bytes": 679416,
+      "sha256": "9a2a8bc3d09a5eacddad6457b851d634a064710c6f9455782f83c371e62da8a0",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/slpi2.b19",
+      "bytes": 82,
+      "sha256": "b85091d62225c68ebfef50aece4367f5418cc358126cc8c5fc8a743a58f16556",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/slpi2.b20",
+      "bytes": 65892,
+      "sha256": "5e8babc9e8e386eee6308bc239506eaa7f597a34bcbac2f33774fb56cc8d2505",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/slpi2.b21",
+      "bytes": 49152,
+      "sha256": "18bc37b4d35b113b00e8d2f6a367b9b455afe4fefdf608e22fdee134ddc5debb",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/slpi2.b23",
+      "bytes": 4904,
+      "sha256": "de731b6167bdca4e4bff601ddb593b553f41450af58a523056a8a003f57fc94d",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/slpi2.mdt",
+      "bytes": 5724,
+      "sha256": "3816dd1768f24265e1bde7e7a98974b145c4ab53f48379d669caa9f1c53f5037",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/slpir.jsn",
+      "bytes": 513,
+      "sha256": "5e64b59f4fd8428b797ddef315a2b9358a74b11caa62efb5140862ac5525b1c6",
+      "kind": "ROM peripheral firmware input"
+    },
+    {
+      "path": "daily-material/firmware/image/slpius.jsn",
+      "bytes": 515,
+      "sha256": "6a268046f75e29fa5e6723c5d8b1eafc4d2b4254b37f38677f17031fe97f1f72",
+      "kind": "ROM peripheral firmware input"
+    }
+  ]
+}

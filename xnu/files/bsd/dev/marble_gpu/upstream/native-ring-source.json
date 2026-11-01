@@ -1,0 +1,18 @@
+{
+  "repository": "https://github.com/UniXNU/NativeAdreno",
+  "commit": "b686b9054f57d393c80195b82568a09f8ca106a2",
+  "changes": "adoptIdle declaration/implementation and read-only writePointer accessor; original packet framing retained",
+  "archive_sha256": "ab63914d0472efd20b92cf38ce16d8e79d723f19aab43c2d506bd743c48f24ee",
+  "files": [
+    {
+      "path": "NativeAdrenoRing.cpp",
+      "upstream_sha256": "dc2c71b8225ec034b800e01d107939fa7d8a8b5335a2337323c016c9e5fc083e",
+      "adapted_sha256": "5228925bcfc3bbb9f20a0d72ebfd63d9bbe09a9d1dae46006af66bb89aaa02cd"
+    },
+    {
+      "path": "NativeAdrenoRing.h",
+      "upstream_sha256": "0811915d30b72a15855714527c4c3f3657ba448597a528c30174765c19b32cda",
+      "adapted_sha256": "7a1ec667b26685351a2c1bc8b6bda22ed6ef59ccf64ae49931c021f46ea981c8"
+    }
+  ]
+}

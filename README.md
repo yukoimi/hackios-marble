@@ -1,235 +1,152 @@
-# HackiOS — XNU kernel
+# HackiOS on marble — Redmi Note 12 Turbo / POCO F5
 
-**HackiOS** boots Apple's open-source **XNU kernel** (`xnu-8796.121.2`, the kernel of iOS 16.5) on Android phone
-hardware and runs the **unmodified iOS 16.5 user space** on top of it: launchd → backboardd → SpringBoard →
-apps. Our own EFI loader, our own replacements for Apple's closed drivers, a UEFI port, and a Linux Wi-Fi driver
-on a compatibility layer make that possible.
+**实验性移植，开发快照：2026-11-01。** 本仓库整理 marble 的 XNU、EFI loader、
+GPU/触摸/显示/音频适配及实际使用的用户态改动，便于后续开发。
 
-It runs in two places:
+Experimental HackiOS port for **marble**. iOS userspace boots and accelerated
+CoreAnimation renders; audio remains a **short, fully muted diagnostic**.
+This is a source handoff, not a daily-use ROM or a ready-to-flash release.
 
-- **POCO X5 Pro 5G (redwood, Snapdragon 778G)** — nothing is flashed: the UEFI is started with `fastboot boot`,
-  the whole system lives in RAM, and after a reboot the phone is back in Android;
-- **QEMU** (`virt`, aarch64) — the same thing on any Linux computer, no phone needed.
+> 上游 redwood（POCO X5 Pro）的功能不代表 marble 已支持。当前没有可用的系统音频、
+> 稳定 60 FPS 或完整日常功能。测试采用 `fastboot boot` 和 RAM 镜像，未访问 Android
+> `/data`、未刷写或擦除分区。仓库不分发 iOS 系统、SDK、ROM 或闭源固件。
 
-This repository is half of the project:
+## 已完成到什么程度
 
-| Repository | What |
+| 项目 | marble 当前状态 | 仍有限制 |
+|---|---|---|
+| 启动 | 现成 Mu-marble UEFI → 自定义 loader → 源码 XNU → launchd/backboardd/SpringBoard/应用 | 需要自行取得匹配 Mu 与 iOS 输入；不是完整开源 iOS |
+| 多核 | 4 个大核运行、压力/返回恢复检查通过，流畅度有明显改善 | 未完成全部 8 核与完整电源管理 |
+| 触摸 | 轻点、滑动、拖动、长按已实机反馈正常；修复松手后仍被当成长按的问题 | 仍需扩大多指、边缘与长时间回归 |
+| GPU | Adreno 路径参与 CoreAnimation/GLES；Dock 模糊及 2×显示已验证 | 不是完整 Metal；瞬态色块与特定合成场景仍需回归 |
+| 中文与布局 | 中文桌面/设置/控制中心、2×布局、状态栏几何修复；静态壁纸兼容回退 | 原生 Poster/动态壁纸、实际中文输入仍需进一步验收 |
+| 显示同步 | 硬件帧/行计数与空白区提交经过有界实机检查 | 未完成显示 IRQ、原子 pageflip；没有稳定 60 FPS 或光学无撕裂结论 |
+| 锁屏/黑屏 | 有限测试完成黑屏→锁屏→桌面；测试退出恢复 Android 并确认熄屏 | 不等于面板断电或 SoC 深度休眠 |
+| 亮度 | DCS 读写、读回、调暗及恢复探测通过 | iOS 亮度滑杆未接通 |
+| 按键 | 只读 observer、mailbox/HID 路径已有测试 | 真实按键边沿与系统音量仍待独立验收 |
+| 音频底层 | v259 同镜像两轮静音 PCM、补数/欠载恢复、停止与资源归还通过 | **没有持续播放、可用系统音频 sink、实际出声或麦克风验收** |
+| 温度与恢复 | 有限会话保留温度/超时、ACK-before-free、失败保留、冷复位检查 | 不是完整热管理/充电/电池 SOC 驱动；端点读数不代表峰值 |
+
+## 尚待适配
+
+- **音频**：持续生产者/EOS/排空/暂停/停止、队列背压与 DMA 同步 → 接现有
+  iOS 音频插件 → 有限幅双扬声器输出/音量/故障保护 → 麦克风。
+- **显示/GPU**：消除通知中心、控制中心、负一屏、资源库、设置退出的瞬态色块；
+  完善缓冲区所有权和同步，完成实际稳定 60 FPS 验收。
+- **日常外围**：真实按键、亮度滑杆、休眠唤醒、电池 SOC/充电、电源服务、
+  Wi-Fi、蓝牙、蜂窝、传感器、摄像头。存在参考代码/固件不等于已适配。
+- **工程化**：去除旧 EFI 模板 bootstrap 及本地 `out/` 隐式依赖，补干净环境
+  构建与发布流程；解决 XNU 完整 make 的 symbolset/export 检查问题。
+
+当前开发入口是 [开发交接](docs/MARBLE-HANDOFF.md)，不要把历史文档里的候选、
+单轮通过或失败镜像当成当前稳定版本。
+
+## 最新音频基线：v259（仅静音诊断）
+
+两轮均完成 24 页（48kHz 下 **128ms 数据**）、5888 输入/6144 输出帧、19 次补入、
+队列绕回、一次欠载补静音恢复及逐页独立 oracle 检查。功放保持 HMUTE / 90dB。
+
+| 测量 | v259 首轮 | 同镜像第二轮 |
+|---|---:|---:|
+| DSP 实际诊断运行 | 530082 us | 520123 us |
+| 完整 metadata-stop | 716754 us | 717030 us |
+| QMP wire 总计 | 1385945 us | 1375849 us |
+| Android 电池端点 | 33.7→34.4°C | 34.4→35.8°C |
+
+READY/AUTH、DATA/TX 退役、quiet ACK、STOP/UNMAP、PAS、XNU unmap ACK、
+DMA free、QMP OFF/close ACK 和显示内存恢复检查通过。此前 v258 的显示 DMA
+审计错误依赖连续 VSync 测量，已在 v259 分离；全部 66 字段、20ms 双采样及
+隔离/时钟归还检查保留。
+
+- 参考命令、profile、哈希与**已测内核源码快照**：[reference/v259](reference/v259/)。
+- 当前主线含后加的原始回复诊断代码，**不等于上述已测内核的逐字节源码状态**。
+- 实机日志是脱敏文本 fixture；合成解析器测试不是新增硬件验收。
+- 原运行期 <600ms、PAS/外层停止分别 <1s、QMP close <750ms/总 <2.5s 的诊断
+  限制继续保留。持续播放需要独立生命周期，不能仅延长这些超时。
+
+## 从哪里开始
+
+### 1. 克隆源码并做离线检查
+
+```sh
+git clone https://github.com/yukoimi/hackios-marble.git
+cd hackios-marble
+python3 tools/marble-host-tests.py
+```
+
+Python 3.11+，C 模型需要 `clang` 或 `gcc`。也可以分别运行：
+
+```sh
+python3 tools/marble-host-tests.py --python-only
+python3 tools/marble-host-tests.py --c-only --cc clang
+```
+
+这些检查不连接手机。本地固件/内核/镜像缺失时，相应集成测试会明确跳过，不能把
+skip 计为通过。用例清单在 `tools/tests/local-input-tests.json` 与
+`host-model-local-inputs.json`。GitHub CI 运行同一套公开检查。
+
+### 2. 准备外部输入与构建环境
+
+先看 **[准备材料与下载入口](docs/MARBLE-INPUTS.md)**：按必需/编译/可选列出下载链接、版本、哈希及来源缺口。
+再看 [构建说明](docs/MARBLE-BUILD.md) 和 [输入身份](reference/v259/inputs.json)：
+
+- 原上游 XNU/依赖、固定 Linux iOS toolchain 与 Theos SDK；
+- 自行取得 iOS 16.5 / 20F66 系统并通过 `ios165/` 的脚本本地提取；
+- 自行取得匹配的 Mu-marble.img；其匹配源码当前缺失；
+- 自行从适用 marble 固件/ROM 提取 GPU、ADSP、功放与设备树参考材料。
+
+本库**已集成固定版本的 userland 源码**，无需另找一份覆盖工作目录。
+`common/setup.sh` 检测集成标记后会保留这份源码。Linux 编译步骤沿用：
+
+```sh
+python3 tools/marble-source-normalize.py
+bash tools/marble-linux-build.sh setup
+bash tools/marble-linux-build.sh kernel
+bash tools/marble-linux-build.sh userland
+```
+
+这些是开发构建步骤，不是已验收的一键安装器。完整 XNU make 仍有既存检查失败；
+原 Windows EFI 打包还依赖 `../toolchains/` 布局与历史模板。旧文档的 `out/...`
+路径是需要自行生成的材料，未随 Git 提供。不要直接把 redwood 的
+`common/run.sh` 或旧 prebuilt 镜像当成 marble 启动包。
+
+### 3. 配置本机设备后，才进行新的临时启动测试
+
+Windows PowerShell 示例：
+
+```powershell
+$env:MARBLE_ANDROID_SERIAL = '填写你自己的 adb 序列号'
+$env:MARBLE_ADB = 'C:/adb/adb.exe'
+$env:MARBLE_FASTBOOT = 'C:/adb/fastboot.exe'
+```
+
+新构建须建立自己的内核/profile/hash 清单，并先完成静音、温度、停止与恢复检查。
+本库没有提交原手机序列号、SSH 密钥或可直接刷入的 marble 发布镜像。
+
+## 源码地图
+
+| 路径 | 内容 |
 |---|---|
-| **hackios-xnu-kernel** (this one) | XNU patches, the EFI loader, the UEFI port, Wi-Fi, QEMU scripts, `xl`, prebuilt kernel/loader/UEFI, `common/` scripts |
-| [hackios-xnu-userland](https://github.com/oosexgang/hackios-xnu-userland) | our init, injected libraries, launchd jobs, the APFS image builder, the scripts that take iOS out of Apple's IPSW, Metal/Mesa work |
+| `xnuloader/loader.c`、`xnuloader/marble_*.h` | RAM loader、触摸桥、时钟/温度/显示租期、DSP 与外设生命周期 |
+| `xnu/files/bsd/dev/marble_*`、`xnu/files/bsd/sys/marble_*` | marble GPU/SMMU、音频协议/队列/内核桥 |
+| `xnu/files/iokit/Kernel/Marble*.inc` | 合成、缩放、GPU ring 和显示节奏 |
+| `userland/` | 已集成用户态源码；含 EAGL、音频插件、启动任务与注入库 |
+| `tools/marble-*.py`、`tools/tests/` | 构建、诊断、报告器、恢复工具与主机测试 |
+| `reference/v259/` | 双轮静音基线的必要参考与旧内核源码，不含二进制输入 |
+| `docs/MARBLE-HANDOFF.md` | 当前进度、已知坑、下一位开发者的起点 |
+| `docs/MARBLE-*.md` | 各阶段详细记录，含保留的失败与局限 |
 
-> **No Apple files are in either repository.** `ios165/fetch.sh` downloads the iOS 16.5 IPSW from Apple's own CDN
-> to *your* machine and extracts what is needed there. HackiOS is an independent research project by OOSEX GANG and
-> is not affiliated with, authorised or endorsed by Apple Inc. iOS, iPhone and Apple are trademarks of Apple Inc.
+## 贡献与验收
 
-<p>
-<img src="docs/lockscreen.jpg" width="190" alt="Lock screen">
-<img src="docs/homescreen.jpg" width="190" alt="Home screen">
-<img src="docs/control-center.jpg" width="190" alt="Control Center">
-<img src="docs/settings.jpg" width="190" alt="Settings">
-</p>
+提交改动时说明设备/输入哈希、构建参数、主机测试、实际实机结果、温度来源和
+停止/资源恢复情况。请区分模型检查、日志解析、单轮实机、多轮实机和可听输出。
+失败镜像保持禁用；不要用历史成功状态覆盖当前失败记录。
 
-Photographed on the phone, the Adreno GPU drawing (`gpu=1`). More in [Screenshots](#screenshots).
+## 来源与许可证
 
-## What works
+基于 OOSEX GANG 的 HackiOS 工作，保留原作者、历史与组件许可证。
+用户态源于固定提交的 `hackios-xnu-userland`；原项目说明保存在
+[README.upstream.md](README.upstream.md)。上游功能表主要针对 redwood，不能套用到 marble。
 
-| Works | Does not work (yet) |
-|---|---|
-| Lock screen, swipe to unlock, home screen with all icons (two pages), stock iOS 16 wallpapers | Cellular, Bluetooth |
-| System gestures: swipe up (home, app switcher), edge swipe (back), Control Center | Charging under our kernel (the phone only discharges) |
-| Apps: Settings, Clock, Calendar, Photos, Notes, Safari and more; widgets (Weather, Calendar) on the phone | Metal for apps (in progress: 293 of 456 system shaders already run on the Adreno, see `docs/air.md` in hackios-xnu-userland) |
-| Phone touchscreen (Goodix GT9916), multitouch, wake on touch; real power and volume keys | App Store content and Apple ID sign-in (no Secure Enclave; FairPlay daemon exits) |
-| Up to 8 CPU cores (`cpus=8`), big core at 2.4 GHz, ~20 s to the lock screen | Video and Live Photo recording |
-| Adreno 642L GPU through Mesa/freedreno (`gpu=1`, OpenGL ES for CoreAnimation) | |
-| Wi-Fi (WCN6750, ath11k): join from Settings, Safari over Wi-Fi, 55–90 Mbit/s | |
-| Sound (speakers, main microphone), camera in Camera.app (front/rear, preview, focus, HEIC photos) | |
-| Data that iOS writes survives a reboot (`var_store=1 ufs_write=1`); iOS root volume on the phone's flash | |
-| Sileo + Procursus (dpkg, apt), tweaks, SSH | |
-
-It is a research bench, not a ROM: a session lasts a given number of seconds, then the kernel returns to the
-loader and hands over its log.
-
-## Quick start: QEMU, no kernel build
-
-`prebuilt/` holds the kernel, loader and our programs built from these repositories, so all you need is the system
-image, which is made on your machine from Apple's IPSW.
-
-Needs: Linux x86-64, ~12 GB free disk, 4 GB free RAM. Packages (Arch):
-
-```sh
-sudo pacman -S --needed git python 7zip lz4 gcc qemu-system-aarch64 qemu-ui-gtk edk2-aarch64
-```
-
-(Debian/Ubuntu: `git python3 7zip liblz4-dev gcc qemu-system-arm qemu-efi-aarch64`; 7-Zip must be 23 or newer — it
-reads APFS.)
-
-```sh
-git clone https://github.com/oosexgang/hackios-xnu-kernel.git hackios
-cd hackios
-common/setup.sh               # brings hackios-xnu-userland into the same tree, checks the host
-ios165/fetch.sh               # downloads 7.4 GB from Apple's CDN and extracts what is needed (5-15 min)
-common/build.sh qemu-virt     # builds the APFS images (and the kernel, if the toolchain is there)
-common/run.sh qemu-virt       # a 20-minute session in a QEMU window
-```
-
-The lock screen appears after 2–3 minutes.
-
-- **Mouse with the left button held = finger.** Unlock / leave an app: swipe up from the very bottom edge; back:
-  swipe from the left edge.
-- Keys: `H` home, `L` lock/power, `↑`/`↓` volume, `F11` (hold) five fingers.
-- From a script: `qemu/touch.py swipe 0.5 0.985 0.5 0.3 250`, `qemu/touch.py tap 0.615 0.71`,
-  `qemu/touch.py key home`; screenshot: `qemu/screendump.sh shot.png`.
-- Right after SpringBoard appears the system is still registering apps: give it 30–40 s.
-- Debian/Ubuntu UEFI firmware: `QEMU_EFI=/usr/share/AAVMF/AAVMF_CODE.fd QEMU_VARS=/usr/share/AAVMF/AAVMF_VARS.fd`.
-
-## On the phone (POCO X5 Pro 5G)
-
-You need a **POCO X5 Pro 5G (redwood)** with an unlocked bootloader, `adb` and `fastboot`, and the images from the
-section above. Nothing is written to the phone's storage.
-
-**The phone's own firmware** is not in the repository and cannot be: it is the vendor's and is taken from the very
-phone it will run on, from its Android:
-
-```sh
-adb pull /vendor/firmware/a660_{gmu.bin,sqe.fw,zap.mdt,zap.b00,zap.b01,zap.b02} fw-gpu/      # GPU (gpu=1)
-adb pull /vendor/firmware_mnt/image/wpss.{mdt,b02,b03,b04,b05,b06,b07} fw-wifi/              # Wi-Fi (wifi=1)
-adb pull /vendor/firmware_mnt/image/adsp.{mdt,b02,...,b36} fw-audio/                         # sound (adsp=1)
-adb pull /vendor/firmware/aw8697_haptic.bin fw-haptic/                                       # haptics
-```
-
-(Put the `fw-*` directories next to the workspace. Wi-Fi also needs `fw-wifi/mac` — the radio's address on one
-line — and `fw-wifi/network` — network name and password. `userland/build.sh` prints which firmware went in.)
-
-```sh
-common/build.sh redwood GL=1          # images + out/redwood-boot.img
-common/run.sh redwood 900             # loader into RAM, system image into RAM, a 15-minute session
-```
-
-or step by step with `xl`:
-
-```sh
-./xl enter            # Android -> fastboot -> our loader in RAM (fastboot boot); it brings up its own USB link
-./xl ramdisk          # upload the system image into the phone's RAM (2.5 GB, ~80 s), once per loader session
-XL_SECS=900 XL_CMDLINE="touchscreen=1 cpufreq=1 bootcpu=7 cpus=8 gpu=1 wifi=1 adsp=1" ./xl run
-./xl screenshot shot.png
-./xl reboot           # back to Android
-```
-
-`./xl` with no arguments lists every command (logs, screen and sound recording, camera frames, stop, state...).
-
-## Prebuilt boot image
-
-Every release has `hackios-redwood-boot.img` attached: the redwood UEFI with our loader inside, ready for
-`fastboot boot`. It contains no Apple files; the system image is still made on your machine (above).
-
-## Building from source
-
-`common/build.sh <device>` runs every step that this machine can run and uses `prebuilt/` for the rest.
-
-- **Kernel** — needs [theos](https://theos.dev/docs/installation-linux) in `~/theos` (cctools and
-  `iPhoneOS16.5.sdk`) and `clang lld python perl`. Details: [xnu/README.md](xnu/README.md).
-  ```sh
-  xnu/apply.sh && xnu-deps/setup.sh && ./xnu-build.sh -j8 -k
-  ```
-- **Loader** — `xnuloader/build.sh` (clang + lld-link, an EFI application without EDK2).
-- **Images** — `REST=1 userland/build.sh` (variables documented at the top of that file).
-- **UEFI** — [uefi/README.md](uefi/README.md) (Project Silicium port); not needed to run, `prebuilt/uefi` has it.
-- After rebuilding: `tools/update-prebuilt.sh` refreshes `prebuilt/`.
-
-## Porting to another device
-
-```sh
-common/new-device.sh <codename> path/to/device.dtb   # profile + loader platform from the phone's device tree
-```
-
-Then follow [docs/PORTING.md](docs/PORTING.md): the UEFI port, the loader's platform description, the kernel's
-drivers, the firmware. Device profiles live in `common/devices/` (`redwood.conf`, `qemu-virt.conf`, `_template.conf`).
-
-## How it works
-
-```
-fastboot boot ──► UEFI (Mu-Silicium) ──► xnuloader (EFI application)
-                                           │  stays resident: USB link (fastboot protocol),
-                                           │  watchdog, receives the kernel's log
-                                           ▼
-            XNU (BCM2837 config as the base + our platform)
-              ├─ GICv3, timer, video console, return to the loader
-              ├─ APFS (images in RAM, iOS volume on flash), ramfs (/private/var, /tmp)
-              ├─ minicrypto instead of corecrypto, AMFI and Sandbox stand-ins (MAC policies)
-              ├─ driver replacements: IOSurface, IOMobileFramebuffer, AppleKeyStore, network stack
-              ├─ input: /dev/redwood-touch ◄─ Goodix GT9916 (phone) / virtio-input (QEMU)
-              ├─ GPU: Adreno 642L, Wi-Fi: WCN6750 (ath11k via LinuxKPI), sound: ADSP / virtio-sound
-              ▼
-   iOS 16.5 launchd → logd, notifyd, cfprefsd, runningboardd, backboardd, SpringBoard, apps
-              ├─ our libraries are injected into backboardd, SpringBoard and mediaserverd
-              │  (virtual HID services, a few ObjC method swaps — in memory only)
-              └─ mediaserverd gets our CoreAudio output device (RedwoodAudio.driver)
-```
-
-The iOS programs, frameworks and dyld shared cache are not changed by a single byte: what they miss is done by the
-kernel (driver replacements) or by a library the kernel injects with `DYLD_INSERT_LIBRARIES` (`kern.exec_inject`).
-
-## Layout
-
-| Path | What |
-|---|---|
-| `common/` | `setup.sh` (workspace), `build.sh` / `run.sh` (per device), `new-device.sh`, `devices/*.conf`, `ugit` |
-| `xl` | drives the phone over USB: loader, kernel runs, logs, screenshots, screen and sound recording |
-| `xnuloader/` | the loader: `loader.c` (UEFI application), `mkpayload.py` (kernel + images + arguments container) |
-| `xnu/` | our XNU changes: patch, new files, `apply.sh` / `export.sh` |
-| `xnu-deps/` | everything for building XNU on Linux: `setup.sh`, tool wrappers, stubs |
-| `xnu-build.sh`, `xnu-env.sh` | kernel build |
-| `uefi/`, `mkxnuimg.py` | the UEFI port and packing the boot image for `fastboot boot` |
-| `wifi/lx/` | the layer on which Linux's Wi-Fi driver builds for our kernel |
-| `qemu/` | QEMU runs, touch input, screenshots, stack symbolication |
-| `tools/` | recording (`recording.py`, `sound.py`), UFS/flash tools, `mk-ath11k.sh`, `new-workspace.sh`, host tests |
-| `prebuilt/` | built kernel, loader and UEFI pieces (`NOTICES.md` for the third-party code in the kernel) |
-| `docs/` | screenshots, [checks.md](docs/checks.md), [PORTING.md](docs/PORTING.md) |
-
-## Debugging
-
-- Session log: QEMU's stdout or `logs/HHMMSS-run.log` from the phone.
-- `RC_JOBS=rc.jobs.tour REST=1 userland/build.sh` — an image that unlocks and opens every app of the first page.
-- `userabort:` in the log is the stack of a process that called `abort()`; `usertrap:` (with `systrace=1`) — crashes.
-- Live stacks (QEMU): `qemu/touch.py stacks NAME`, then `qemu/symstack.py LOG NAME`
-  (needs [`ipsw`](https://github.com/blacktop/ipsw)).
-- How a check can lie to you: [docs/checks.md](docs/checks.md).
-
-## Screenshots
-
-From the phone's screen, one session (`GL=1 REST=1`, `gpu=1`):
-
-<p>
-<img src="docs/homescreen-2.jpg" width="160" alt="Home screen, page 2">
-<img src="docs/search.jpg" width="160" alt="Search">
-<img src="docs/settings-general.jpg" width="160" alt="Settings > General">
-<img src="docs/calendar.jpg" width="160" alt="Calendar">
-<img src="docs/clock.jpg" width="160" alt="Clock">
-</p>
-<p>
-<img src="docs/wallet.jpg" width="160" alt="Wallet">
-<img src="docs/messages.jpg" width="160" alt="Messages">
-<img src="docs/music.jpg" width="160" alt="Music">
-<img src="docs/maps.jpg" width="160" alt="Maps">
-<img src="docs/appstore-tabs.png" width="160" alt="App Store">
-</p>
-
-## Licenses
-
-- No iOS files are in the repositories: `ios165/fetch.sh` downloads them from Apple's CDN to your machine.
-- `xnu/` is a derivative work of XNU and is distributed under APSL 2.0, like XNU itself; `prebuilt/mach.*` is the
-  kernel built from it. It also contains ath11k (BSD-3-Clause-Clear) and FreeBSD LinuxKPI code (BSD-2-Clause):
-  see [prebuilt/NOTICES.md](prebuilt/NOTICES.md).
-- `xnu/files/bsd/miscfs/apfs/libzbitmap/` and `xnu-deps/build/lzbitmap/` — libzbitmap (Corellium LLC, MIT here);
-  `xnu/files/bsd/miscfs/apfs/libdeflate/` — libdeflate 1.24 (Eric Biggers, MIT, `COPYING` there).
-- ath11k, Linux and FreeBSD sources are not in the repository: `tools/mk-ath11k.sh` fetches pinned releases.
-  `wifi/lx/patches/*.patch` are our changes to FreeBSD headers; the rest of `wifi/lx/` is ours.
-- `uefi/files/Binaries/redwood` and `prebuilt/uefi/SILICIUM_UEFI.fd` contain UEFI drivers from the phone's
-  Xiaomi firmware, distributed the way Project Silicium distributes them for other devices;
-  `prebuilt/uefi/mkbootimg.py` — AOSP, Apache-2.0.
-- This repository is licensed under the [Apple Public Source License 2.0](LICENSE): our changes to XNU are a derivative of XNU and must be, and our other code here (loader, scripts) is released under the same license. Third-party code keeps its own license, as listed above.
-
-## Team
-
-OOSEX GANG — [@oodze](https://t.me/oodze) (founder), [@netusd](https://t.me/netusd), [@wannqn](https://t.me/wannqn),
-[@hxfuxyyXD](https://t.me/hxfuxyyXD). News: [t.me/oosexgangdevs](https://t.me/oosexgangdevs).
+见 [NOTICE.md](NOTICE.md)、根 `LICENSE`、`userland/LICENSE` 与各第三方文件旁的
+许可证。Apple/iOS、Qualcomm 固件及 SDK 不随本次源码发布重新分发。

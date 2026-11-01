@@ -1,0 +1,31 @@
+aud-native: phase=begin active=1 failed=0 stream=0 pending=0 tx=0 reply=0 started=0 submitted=0 completed=0 published=0 configured=0 RX=0 TX=0 PAS_stopped=0 restored=0 owner=EFI zero=1 XNU_sink=0 audio_acceptance=0
+marble-pil-boot: auth status=0 transport=1 secure=0 elapsed_us=113466 accepted=1 hold_limit_ms=600 payload_access=0
+marble-audio-context: complete PASS=1 stable=1 inactive=1 reads=30 MMIO_writes=0 DMA_requests=0 ownership=0
+aud-native: phase=progress active=1 failed=0 stream=0 pending=0 tx=0 reply=0 started=0 submitted=0 completed=0 published=0 configured=0 RX=1 TX=2 PAS_stopped=0 restored=0 owner=EFI zero=1 XNU_sink=0 audio_acceptance=0
+aud-native: phase=progress active=1 failed=0 stream=1 pending=1 tx=0 reply=0 started=0 submitted=0 completed=0 published=0 configured=0 RX=126 TX=8 PAS_stopped=0 restored=0 owner=EFI zero=1 XNU_sink=0 audio_acceptance=0
+aud-native: phase=progress active=1 failed=0 stream=2 pending=1 tx=0 reply=0 started=0 submitted=0 completed=0 published=0 configured=0 RX=128 TX=10 PAS_stopped=0 restored=0 owner=EFI zero=1 XNU_sink=0 audio_acceptance=0
+aud-native: phase=progress active=1 failed=0 stream=3 pending=1 tx=0 reply=0 started=0 submitted=0 completed=0 published=0 configured=0 RX=130 TX=12 PAS_stopped=0 restored=0 owner=EFI zero=1 XNU_sink=0 audio_acceptance=0
+marble-aw-analog: complete device=34 PASS=1 attempted=1 writes=2 polls=1 ready=1 restored=1 dirty=0 status=311 HMUTE_retained=1 attenuation_db=90 speaker_switch_writes=0 audio_acceptance=0 elapsed_us=7287
+marble-aw-digital: complete device=34 PASS=1 attempted=1 writes=2 polls=1 locked=1 restored=1 dirty=0 sysctrl=b443 sysctrl2=f039 status=11 AMPPD_retained=0 HMUTE_retained=1 attenuation_db=90 speaker_switch_writes=0 audio_acceptance=0
+marble-aw-analog: complete device=35 PASS=1 attempted=1 writes=2 polls=1 ready=1 restored=1 dirty=0 status=311 HMUTE_retained=1 attenuation_db=90 speaker_switch_writes=0 audio_acceptance=0 elapsed_us=7285
+marble-aw-digital: complete device=35 PASS=1 attempted=1 writes=2 polls=1 locked=1 restored=1 dirty=0 sysctrl=3443 sysctrl2=f039 status=11 AMPPD_retained=0 HMUTE_retained=1 attenuation_db=90 speaker_switch_writes=0 audio_acceptance=0
+aud-native: phase=progress active=1 failed=0 stream=4 pending=1 tx=0 reply=0 started=1 submitted=1 completed=0 published=1 configured=1 RX=132 TX=14 PAS_stopped=0 restored=0 owner=EFI zero=1 XNU_sink=0 audio_acceptance=0
+aud-native: phase=progress active=1 failed=0 stream=5 pending=1 tx=0 reply=0 started=1 submitted=2 completed=2 published=2 configured=1 RX=136 TX=18 PAS_stopped=0 restored=0 owner=EFI zero=1 XNU_sink=0 audio_acceptance=0
+aud-native: phase=progress active=1 failed=0 stream=6 pending=1 tx=0 reply=0 started=1 submitted=2 completed=2 published=2 configured=1 RX=138 TX=20 PAS_stopped=0 restored=0 owner=EFI zero=1 XNU_sink=0 audio_acceptance=0
+aud-native: phase=progress active=1 failed=0 stream=7 pending=1 tx=0 reply=0 started=1 submitted=2 completed=2 published=2 configured=1 RX=140 TX=22 PAS_stopped=0 restored=0 owner=EFI zero=1 XNU_sink=0 audio_acceptance=0
+aud-native: phase=progress active=1 failed=0 stream=8 pending=0 tx=1 reply=1 started=1 submitted=2 completed=2 published=2 configured=1 RX=142 TX=23 PAS_stopped=0 restored=0 owner=EFI zero=1 XNU_sink=0 audio_acceptance=0
+tp: end PASS=1 active=0 restored=1 writes=12 PAS_stopped=0 amp_changes=0
+marble-pil-boot: observed hold_us=530077 thermal_samples=6 thermal_ok=1 die_mc=35300 link_up=0 link_down=0 link_invalid=0 service_acceptance=0 audio_acceptance=0 runtime_ok=1
+aud-native: phase=runtime active=1 failed=0 stream=8 pending=0 tx=1 reply=1 started=1 submitted=2 completed=2 published=2 configured=1 RX=142 TX=23 PAS_stopped=0 restored=0 owner=EFI zero=1 XNU_sink=0 audio_acceptance=0
+marble-smp2p-boot: stopped PASS=1 ready_seen=1 stop_ack_seen=1 stop_clear=1 notifications=3 PAS_shutdown_allowed=1 payload_access=0
+marble-smccc: PAS_stop PASS=1 fn=42000206 arginfo=1 PAS_id=1 initial_a6=0 initial_a7=0 calls=44 outcome=0 raw_a0=0 raw_a1=0 raw_a2=0 raw_a3=0 raw_a6=0 previous_TPL=4 DAIF_before=300 DAIF_after=300 elapsed_us=609506 WAITQ_replays=0 auth_reset=0 DSP_start=1
+marble-audio-map: result PASS=1 stage=9 status=0 context=5 allocation=f9f24000 physical=f9f27000 par=ff000f9f27000a82 allocated=1 programmed=1 translated=1 disabled=1 restored=1 freed=1 retained=0 writes=35 translation_mode=2 stream_writes=8 PCM_requests=2
+aud-native: phase=stopped active=0 failed=0 stream=0 pending=0 tx=0 reply=0 started=0 submitted=2 completed=2 published=2 configured=1 RX=142 TX=23 PAS_stopped=1 restored=1 owner=EFI zero=1 XNU_sink=0 audio_acceptance=0
+marble-pil-held: shutdown status=0 transport=1 secure=0 verified=1 target_access=0
+marble-qmp-hold: complete PASS=1 ON_before_PAS=1 PAS_before_OFF=1 mailbox_ACKs=2 IPCC_clears=2 wire_preserved=1 DSP_start=1 audio_acceptance=0
+marble-glink: released PASS=1 active=0 dirty=0 up=0 down=0 invalid=0 open=0 tx=0 dsp_start_attempted=1 pmic_writes=0
+marble-pil-held: restored PASS=1 original_restored=1 free_status=0 backup_retained=0 shutdown_before_restore=1 DSP_start=1
+marble-pil-header: complete PASS=1 metadata_clear=1 clear_rc=10 PAS_metadata_requested=1 auth_reset=1 dsp_start=1
+marble-pil-ramfs: released PASS=1 installed=0 dirty=0 reads=27 file_writes=0 block_reads=0 block_writes=0 opens=57 closes=57 watchdog_clear=8000000000000007 dsp_start=1
+marble-adsp-owned: complete PASS=1 ROM_stage_restored=1 LPI_released=1 LPI_active=0 XO_retained=1 thermal_ok=1 ICB_RUN_retained=1 SMEM_retained=1 watchdog_armed=1 cold_reset_required=1 original_hardware_restored=0 DSP_start=1 storage_access=0 audio_acceptance=0
+aw: end PASS=1 called=1 window_passed=1 DSP_passed=1 DSP_dirty=0 config_active=0 clock_active=0 dirty=0 elapsed_us=5186362 amp_commands=392 cold_reset_required=1 audio_acceptance=0

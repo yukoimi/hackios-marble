@@ -33,13 +33,57 @@
 #include <mach/vm_param.h>
 #include <miscfs/devfs/devfs.h>
 #include <pexpert/pexpert.h>
+#include <pexpert/device_tree.h>
 #include <sys/conf.h>
 #include <sys/errno.h>
 #include <sys/proc.h>
 #include <sys/redwood_audio.h>
+#include <sys/marble_audio_queue.h>
+#include <sys/marble_audio_smem.h>
+#include <sys/kauth.h>
 #include <sys/systm.h>
 #include <sys/uio.h>
 #include <vm/vm_kern.h>
+#include <vm/memory_types.h>
+
+extern vm_offset_t ml_io_map_unmappable(vm_offset_t,vm_size_t,unsigned int);
+extern void ml_io_unmap(vm_offset_t,vm_size_t);
+
+static int marble_audio_smem_read(void *cookie,uint32_t offset,void *out,uint32_t n)
+{
+	if(!cookie || offset>MASMEM_BYTES || n>MASMEM_BYTES-offset)return 0;
+	const volatile uint8_t *mapped=cookie;
+	for(uint32_t i=0;i<n;i++)((uint8_t *)out)[i]=mapped[offset+i];
+	return 1;
+}
+static void marble_audio_native_transport_probe(void)
+{
+	uint32_t enabled=0;
+	if(!PE_parse_boot_argn("marble_audio_transport",&enabled,sizeof(enabled)) || enabled!=1)return;
+	DTEntry entry;void const *prop;unsigned int size;
+	unsigned ok=SecureDTLookupEntry(NULL,"/arm-io/marble-audio-transport",&entry)==kSuccess &&
+	    SecureDTGetProperty(entry,"compatible",&prop,&size)==kSuccess &&
+	    size==sizeof("marble,smem-glink-readonly-v1") && !memcmp(prop,"marble,smem-glink-readonly-v1",size);
+	uint64_t pa=0,bytes=0;
+	if(ok && SecureDTGetProperty(entry,"reg",&prop,&size)==kSuccess && size==16) {
+		pa=((const uint64_t *)prop)[0];bytes=((const uint64_t *)prop)[1];
+	} else ok=0;
+	ok=ok && pa==0x80900000ULL && bytes==MASMEM_BYTES;
+	vm_offset_t mapped=ok?ml_io_map_unmappable(pa,bytes,VM_WIMG_WCOMB):0;
+	MarbleAudioSmem view={0};uint8_t first[32]={0},last[32]={0};
+	ok=ok && mapped && marble_audio_smem_find(marble_audio_smem_read,(void *)mapped,&view) &&
+	    view.present==3 && marble_audio_smem_read((void *)mapped,view.item[0],first,32);
+	if(ok) {
+		__asm__ volatile("dmb sy" ::: "memory");delay_for_interval(1,NSEC_PER_MSEC);
+		ok=marble_audio_smem_read((void *)mapped,view.item[0],last,32) && !memcmp(first,last,32);
+		for(unsigned i=0;i<4;i++)ok=ok && masmem32(first+4*i)<16384 && !(masmem32(first+4*i)&7);
+		ok=ok && !masmem32(first+4) && !masmem32(first+8);
+	}
+	if(mapped)ml_io_unmap(mapped,bytes);
+	printf("marble-audio-transport: ABI=MAUDIO-NATIVE-GLINK-RO-v1 PASS=%u partition=%x partition_bytes=%u descriptor=%x TX_FIFO=%x RX_present=%u indices=%x,%x,%x,%x map_released=%u SMEM_writes=0 IPCC_writes=0 PAS_calls=0 DSP=0 hardware_audio=0\n",
+	    ok,view.partition,view.partition_bytes,view.item[0],view.item[1],!!(view.present&4),
+	    masmem32(first),masmem32(first+4),masmem32(first+8),masmem32(first+12),!!mapped);
+}
 
 extern uint64_t kvtophys(vm_offset_t va);       /* pmap_paddr_t */
 
@@ -67,6 +111,13 @@ static LCK_GRP_DECLARE(audio_lck_grp, "redwood-audio");
 static LCK_MTX_DECLARE(audio_lock, &audio_lck_grp);
 
 static redwood_audio_sink_t audio_sink;
+/* Opt-in upper-layer probe only. No firmware/DSP or speaker operation. */
+static MarbleAudioQueue marble_audio_queue;
+static bool marble_audio_queue_enabled;
+#include "marble_audio_native_kernel.h"
+static uint32_t marble_audio_queue_sink(const int16_t *frames,uint32_t count)
+{marble_audio_owner_tap(frames,count);return marble_audio_queue_push(&marble_audio_queue,frames,count);}
+
 
 static uint8_t *rec_base;
 static bool rec_fed;                    /* boot-arg rec_sound_fed=1: what the guard let through is recorded, not what was written */
@@ -260,7 +311,30 @@ static int
 audio_ioctl(__unused dev_t dev, u_long command, caddr_t data, __unused int flags, __unused struct proc *p)
 {
 	const struct redwood_audio_volume *volume = (const struct redwood_audio_volume *)data;
+	if (command == MAREFILL_IOCTL) {
+		if (!marble_audio_queue_enabled || !marble_audio_kernel.refill) return ENOTTY;
+		if (!kauth_cred_issuser(kauth_cred_get())) return EPERM;
+		lck_mtx_lock(&audio_lock);
+		int ok=marble_audio_refill_status((MarbleAudioRefillStatus *)data);
+		lck_mtx_unlock(&audio_lock);
+		return ok?0:EINVAL;
+	}
 
+	if (command == MAQ_IOCTL) {
+		if (!marble_audio_queue_enabled) return ENOTTY;
+		if (!kauth_cred_issuser(kauth_cred_get())) return EPERM;
+		MarbleAudioQueueTransfer *r=(MarbleAudioQueueTransfer *)data;
+		if (r->magic!=MAQ_MAGIC || r->version!=1 || r->requested>MAQ_MAX_POP || r->reserved) return EINVAL;
+		uint32_t count=r->requested;
+		bzero(r,sizeof(*r));r->magic=MAQ_MAGIC;r->version=1;r->requested=count;r->capacity=MAQ_CAPACITY;
+		lck_mtx_lock(&audio_lock);
+		r->actual=marble_audio_queue_pop(&marble_audio_queue,r->samples,count);
+		r->queued=marble_audio_queue.head-marble_audio_queue.tail;r->failed=marble_audio_queue.failed;
+		r->accepted=marble_audio_queue.accepted;r->dropped=marble_audio_queue.dropped;
+		r->consumed=marble_audio_queue.consumed;r->silence=marble_audio_queue.silence;
+		lck_mtx_unlock(&audio_lock);
+		return r->failed?EIO:0;
+	}
 	if (command != REDWOOD_AUDIO_SET_VOLUME) {
 		return ENOTTY;
 	}
@@ -346,6 +420,18 @@ redwood_audio_init(void)
 	}
 	report_call = thread_call_allocate(audio_report, NULL);
 	audio_recording_init();
+	uint32_t queue_probe=0,adsp=0,sound=0;
+	PE_parse_boot_argn("marble_audio_queue", &queue_probe, sizeof(queue_probe));
+	PE_parse_boot_argn("adsp", &adsp, sizeof(adsp));
+	PE_parse_boot_argn("sound", &sound, sizeof(sound));
+	if (queue_probe==1 && !adsp && !sound) {
+		marble_audio_owner_kernel_start();
+		marble_audio_native_transport_probe();
+		marble_audio_queue_enabled=true;
+		redwood_audio_set_sink("marble RAM queue probe (no DSP)",marble_audio_queue_sink);
+		printf("marble-audio-queue: ready ABI=MAUDIO-QUEUE-PROBE-v1 version=1 capacity=4096 rate=48000 bits=16 channels=2 DSP=0 hardware_audio=0\n");
+		return;
+	}
 	redwood_virtio_sound_init();
 	redwood_speaker_init();
 	redwood_haptic_init();

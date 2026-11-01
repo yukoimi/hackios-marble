@@ -1,0 +1,204 @@
+aw: begin DSP_start=0 amps_reset=1 frequency_requests=0
+marble-adsp-owned: begin contract=RUN-XO-LPI-SCM-BW-ROM-boot-stop-reset-v1 package_bytes=30180144 package_fingerprints=2 DSP_start=0
+marble-adsp-owned: phase=install retained_watchdog=1
+marble-adsp-owned: phase=smp2p DSP_off=1
+marble-adsp-owned: phase=lpi configured_level=256
+marble-adsp-owned: phase=xo LPI_clients=2 LPI_level=256
+marble-adsp-owned: phase=bandwidth baseline=RUN_XO_LPI_held
+marble-adsp-owned: phase=ROM-boot bandwidth_held=1 XO_held=1 LPI_clients=2 DSP_start=0
+marble-pil-ramfs: install slot=0 status=0
+marble-pil-ramfs: install slot=1 status=0
+marble-pil-ramfs: install slot=2 status=0
+marble-pil-ramfs: install slot=3 status=0
+marble-pil-ramfs: native_open=adsp2.mdt status=0 owned=1 dsp_start=0
+marble-pil-ramfs: native_read=adsp2.mdt bytes=5964 info_status=0 read_status=0 content_match=1
+marble-pil-ramfs: native_open=slpi2.mdt status=0 owned=1 dsp_start=0
+marble-pil-ramfs: native_read=slpi2.mdt bytes=5724 info_status=0 read_status=0 content_match=1
+marble-pil-header: load_status=8000000000000001 records=1 metadata_bytes=5964 ROM_match=1 native_running=0 PAS_callback=refuse_before_auth dsp_start=0
+marble-pil-held: loaded PASS=1 native_rc=0 files=24 ROM_matches=24 zero_regions=25 loads=25 backup_retained=1 original_restored=0 auth_reset=0 dsp_start=0
+marble-qmp-hold: notify stage=1 PASS=1 observed=0 after=ffffffff clear_writes=1 foreign_clears=0 IRQ_enable_writes=0 GIC_writes=0
+marble-qmp-hold: on PASS=1 mailbox_ACKs=1 IPCC_clears=1 channel_open=1 PAS_stop_calls=0 DSP_start=0
+aud-native: phase=begin active=1 failed=0 stream=0 pending=0 tx=0 reply=0 started=0 submitted=0 completed=0 published=0 configured=0 RX=0 TX=0 PAS_stopped=0 restored=0 owner=EFI zero=1 XNU_sink=0 audio_acceptance=0
+marble-pil-held: post_load_gate PASS=1 ROM_loaded=1 PAS_initialized=1 DSP_start=0
+marble-glink: locate status=0 present=1 open=0 tx=0 dsp_start=0 pmic_writes=0
+marble-glink: register exact_abi=1 remote=lpass status=0 result=0 handle=fa8a6418 up=0 down=0 invalid=0
+marble-pil-boot: auth status=0 transport=1 secure=0 elapsed_us=113749 accepted=1 hold_limit_ms=600 payload_access=0
+marble-audio-context: begin context=5 base=15085000 MMIO_writes=0
+marble-audio-context: word index=0 value=e0 second=e0
+marble-audio-context: word index=1 value=60 second=60
+marble-audio-context: word index=2 value=0 second=0
+marble-audio-context: word index=3 value=0 second=0
+marble-audio-context: word index=4 value=0 second=0
+marble-audio-context: word index=5 value=0 second=0
+marble-audio-context: word index=6 value=0 second=0
+marble-audio-context: word index=7 value=0 second=0
+marble-audio-context: word index=8 value=0 second=0
+marble-audio-context: word index=9 value=400 second=400
+marble-audio-context: word index=10 value=0 second=0
+marble-audio-context: word index=11 value=100ff second=100ff
+marble-audio-context: word index=12 value=1 second=1
+marble-audio-context: word index=13 value=3 second=3
+marble-audio-context: word index=14 value=5111 second=5111
+marble-audio-context: complete PASS=1 stable=1 inactive=1 reads=30 MMIO_writes=0 DMA_requests=0 ownership=0
+aud-native: phase=progress active=1 failed=0 stream=0 pending=0 tx=0 reply=0 started=0 submitted=0 completed=0 published=0 configured=0 RX=1 TX=2 PAS_stopped=0 restored=0 owner=EFI zero=1 XNU_sink=0 audio_acceptance=0
+aud-native: phase=progress active=1 failed=0 stream=1 pending=1 tx=0 reply=0 started=0 submitted=0 completed=0 published=0 configured=0 RX=126 TX=8 PAS_stopped=0 restored=0 owner=EFI zero=1 XNU_sink=0 audio_acceptance=0
+aud-native: phase=progress active=1 failed=0 stream=2 pending=1 tx=0 reply=0 started=0 submitted=0 completed=0 published=0 configured=0 RX=128 TX=10 PAS_stopped=0 restored=0 owner=EFI zero=1 XNU_sink=0 audio_acceptance=0
+aud-native: phase=progress active=1 failed=0 stream=3 pending=1 tx=0 reply=0 started=0 submitted=0 completed=0 published=0 configured=0 RX=130 TX=12 PAS_stopped=0 restored=0 owner=EFI zero=1 XNU_sink=0 audio_acceptance=0
+tp: begin cfg=2c4,2c4,c4,c5 amps_reset=1
+tp: pin phase=0 index=0 gpio=1 cfg=1 io=0
+tp: pin phase=0 index=1 gpio=120 cfg=1 io=0
+tp: pin phase=0 index=2 gpio=52 cfg=1 io=0
+tp: pin phase=0 index=3 gpio=121 cfg=1 io=0
+tp: pin phase=0 index=4 gpio=123 cfg=1 io=0
+tp: pin phase=0 index=5 gpio=122 cfg=1 io=0
+tp: pin phase=0 index=6 gpio=124 cfg=1 io=0
+tp: pin phase=1 index=0 gpio=1 cfg=1 io=0
+tp: pin phase=1 index=1 gpio=120 cfg=1 io=0
+tp: pin phase=1 index=2 gpio=52 cfg=1 io=0
+tp: pin phase=1 index=3 gpio=121 cfg=2c4 io=3
+tp: pin phase=1 index=4 gpio=123 cfg=2c4 io=3
+tp: pin phase=1 index=5 gpio=122 cfg=c4 io=0
+tp: pin phase=1 index=6 gpio=124 cfg=c5 io=0
+tp: acquired PASS=1 active=1 writes=6
+aw: window begin stage=3 pins_active=1 amp_commands=0
+aw: lookup PASS=1 after_START=1 amplifier_commands=0
+aw: IRQ phase=audio-amp-IRQ-before intid=405 enable=0 pending=0 active=0 bits=0 writes=0 IAR_reads=0
+aw: temperature valid=1 maximum_mc=38100 limit_mc=50000 PASS=1
+aw: GCC index=0 address=162010 value=1f writes=0
+aw: GCC index=1 address=133280 value=4220 writes=0
+aw: GCC index=2 address=13328c value=4220 writes=0
+aw: GCC index=3 address=12e00c value=4220 writes=0
+aw: GCC index=4 address=12e004 value=0 writes=0
+aw: GCC index=5 address=12e008 value=80000002 writes=0
+aw: GCC index=6 address=12e014 value=0 writes=0
+aw: GCC index=7 address=12e018 value=100000 writes=0
+marble-aw-digital: access device=34 read=1 reg=4 value=b443 PASS=1 commands=2 dirty=0
+marble-aw-digital: access device=34 read=1 reg=5 value=f039 PASS=1 commands=2 dirty=0
+marble-aw-digital: access device=34 read=0 reg=4 value=b442 PASS=1 commands=1 dirty=0
+marble-aw-digital: access device=34 read=1 reg=4 value=b442 PASS=1 commands=2 dirty=0
+marble-aw-digital: access device=34 read=1 reg=5 value=f039 PASS=1 commands=2 dirty=0
+marble-aw-digital: access device=34 read=1 reg=1 value=11 PASS=1 commands=2 dirty=0
+marble-aw-analog: access device=34 read=1 reg=4 value=b442 PASS=1 commands=2 dirty=0
+marble-aw-analog: access device=34 read=1 reg=5 value=f039 PASS=1 commands=2 dirty=0
+marble-aw-analog: access device=34 read=1 reg=1 value=11 PASS=1 commands=2 dirty=0
+marble-aw-analog: access device=34 read=0 reg=4 value=b440 PASS=1 commands=1 dirty=0
+marble-aw-analog: access device=34 read=1 reg=4 value=b440 PASS=1 commands=2 dirty=0
+marble-aw-analog: access device=34 read=1 reg=5 value=f039 PASS=1 commands=2 dirty=0
+marble-aw-analog: access device=34 read=1 reg=1 value=311 PASS=1 commands=2 dirty=0
+marble-aw-analog: access device=34 read=0 reg=4 value=b442 PASS=1 commands=1 dirty=0
+marble-aw-analog: access device=34 read=1 reg=4 value=b442 PASS=1 commands=2 dirty=0
+marble-aw-analog: access device=34 read=1 reg=5 value=f039 PASS=1 commands=2 dirty=0
+marble-aw-analog: complete device=34 PASS=1 attempted=1 writes=2 polls=1 ready=1 restored=1 dirty=0 status=311 HMUTE_retained=1 attenuation_db=90 speaker_switch_writes=0 audio_acceptance=0 elapsed_us=7266
+marble-aw-digital: access device=34 read=0 reg=4 value=b443 PASS=1 commands=1 dirty=0
+marble-aw-digital: access device=34 read=1 reg=4 value=b443 PASS=1 commands=2 dirty=0
+marble-aw-digital: access device=34 read=1 reg=5 value=f039 PASS=1 commands=2 dirty=0
+marble-aw-digital: complete device=34 PASS=1 attempted=1 writes=2 polls=1 locked=1 restored=1 dirty=0 sysctrl=b443 sysctrl2=f039 status=11 AMPPD_retained=0 HMUTE_retained=1 attenuation_db=90 speaker_switch_writes=0 audio_acceptance=0
+marble-aw-digital: access device=35 read=1 reg=4 value=3443 PASS=1 commands=2 dirty=0
+marble-aw-digital: access device=35 read=1 reg=5 value=f039 PASS=1 commands=2 dirty=0
+marble-aw-digital: access device=35 read=0 reg=4 value=3442 PASS=1 commands=1 dirty=0
+marble-aw-digital: access device=35 read=1 reg=4 value=3442 PASS=1 commands=2 dirty=0
+marble-aw-digital: access device=35 read=1 reg=5 value=f039 PASS=1 commands=2 dirty=0
+marble-aw-digital: access device=35 read=1 reg=1 value=11 PASS=1 commands=2 dirty=0
+marble-aw-analog: access device=35 read=1 reg=4 value=3442 PASS=1 commands=2 dirty=0
+marble-aw-analog: access device=35 read=1 reg=5 value=f039 PASS=1 commands=2 dirty=0
+marble-aw-analog: access device=35 read=1 reg=1 value=11 PASS=1 commands=2 dirty=0
+marble-aw-analog: access device=35 read=0 reg=4 value=3440 PASS=1 commands=1 dirty=0
+marble-aw-analog: access device=35 read=1 reg=4 value=3440 PASS=1 commands=2 dirty=0
+marble-aw-analog: access device=35 read=1 reg=5 value=f039 PASS=1 commands=2 dirty=0
+marble-aw-analog: access device=35 read=1 reg=1 value=311 PASS=1 commands=2 dirty=0
+marble-aw-analog: access device=35 read=0 reg=4 value=3442 PASS=1 commands=1 dirty=0
+marble-aw-analog: access device=35 read=1 reg=4 value=3442 PASS=1 commands=2 dirty=0
+marble-aw-analog: access device=35 read=1 reg=5 value=f039 PASS=1 commands=2 dirty=0
+marble-aw-analog: complete device=35 PASS=1 attempted=1 writes=2 polls=1 ready=1 restored=1 dirty=0 status=311 HMUTE_retained=1 attenuation_db=90 speaker_switch_writes=0 audio_acceptance=0 elapsed_us=7262
+marble-aw-digital: access device=35 read=0 reg=4 value=3443 PASS=1 commands=1 dirty=0
+marble-aw-digital: access device=35 read=1 reg=4 value=3443 PASS=1 commands=2 dirty=0
+marble-aw-digital: access device=35 read=1 reg=5 value=f039 PASS=1 commands=2 dirty=0
+marble-aw-digital: complete device=35 PASS=1 attempted=1 writes=2 polls=1 locked=1 restored=1 dirty=0 sysctrl=3443 sysctrl2=f039 status=11 AMPPD_retained=0 HMUTE_retained=1 attenuation_db=90 speaker_switch_writes=0 audio_acceptance=0
+aw: IRQ phase=audio-amp-IRQ-after intid=405 enable=0 pending=0 active=0 bits=0 writes=0 IAR_reads=0
+aw: window end PASS=1 config_active=0 clock_active=0 amp_commands=392
+aud-owner-proof: phase=configure epoch=13eb44b5 flags=15 MAP_typed=1 START_typed=1 START_TX=1 submitted=1 completed=0 audible=0
+aud-native: phase=progress active=1 failed=0 stream=4 pending=1 tx=0 reply=0 started=1 submitted=1 completed=0 published=1 configured=1 RX=132 TX=14 PAS_stopped=0 restored=0 owner=EFI zero=1 XNU_sink=0 audio_acceptance=0
+aud-native: phase=progress active=1 failed=0 stream=5 pending=1 tx=0 reply=0 started=1 submitted=2 completed=2 published=2 configured=1 RX=136 TX=18 PAS_stopped=0 restored=0 owner=EFI zero=1 XNU_sink=0 audio_acceptance=0
+aud-native: phase=progress active=1 failed=0 stream=6 pending=1 tx=0 reply=0 started=1 submitted=2 completed=2 published=2 configured=1 RX=138 TX=20 PAS_stopped=0 restored=0 owner=EFI zero=1 XNU_sink=0 audio_acceptance=0
+aud-native: phase=progress active=1 failed=0 stream=7 pending=1 tx=0 reply=0 started=1 submitted=2 completed=2 published=2 configured=1 RX=140 TX=22 PAS_stopped=0 restored=0 owner=EFI zero=1 XNU_sink=0 audio_acceptance=0
+aud-native: phase=progress active=1 failed=0 stream=8 pending=0 tx=1 reply=1 started=1 submitted=2 completed=2 published=2 configured=1 RX=142 TX=23 PAS_stopped=0 restored=0 owner=EFI zero=1 XNU_sink=0 audio_acceptance=0
+aud-owner-proof: phase=retired epoch=13eb44b5 flags=63 MAP_typed=1 START_typed=1 UNMAP_typed=1 UNMAP_TX=1 submitted=2 completed=2 audible=0
+tp: pin phase=2 index=0 gpio=1 cfg=1 io=0
+tp: pin phase=2 index=1 gpio=120 cfg=1 io=0
+tp: pin phase=2 index=2 gpio=52 cfg=1 io=0
+tp: pin phase=2 index=3 gpio=121 cfg=1 io=0
+tp: pin phase=2 index=4 gpio=123 cfg=1 io=0
+tp: pin phase=2 index=5 gpio=122 cfg=1 io=0
+tp: pin phase=2 index=6 gpio=124 cfg=1 io=0
+tp: end PASS=1 active=0 restored=1 writes=12 PAS_stopped=0 amp_changes=0
+marble-pil-boot: observed hold_us=520172 thermal_samples=6 thermal_ok=1 die_mc=37700 link_up=0 link_down=0 link_invalid=0 service_acceptance=0 audio_acceptance=0 runtime_ok=1
+aw: runtime deadline_us=600000 poll_rounds=60 initial_service_cadence_us=100000 thermal_samples=6 includes_I2C_work=1 IRQ_masks_unchanged=1 frequency_requests=0
+aud-native: phase=runtime active=1 failed=0 stream=8 pending=0 tx=1 reply=1 started=1 submitted=2 completed=2 published=2 configured=1 RX=142 TX=23 PAS_stopped=0 restored=0 owner=EFI zero=1 XNU_sink=0 audio_acceptance=0
+marble-smp2p-boot: remote item=443 bytes=344 address=80ad31d8 local=2 remote=0 stable_copy=1 bounded_reads=340 allocator_calls=0
+marble-smp2p-boot: ready PASS=1 ready_seen=1 value=6 wait_us=84 fatal=0 stale_ack=0
+marble-smp2p-boot: stop-ack PASS=1 ready_seen=1 stop_ack_seen=1 value=10e wait_us=14688
+marble-smp2p-boot: stopped PASS=1 ready_seen=1 stop_ack_seen=1 stop_clear=1 notifications=3 PAS_shutdown_allowed=1 payload_access=0
+marble-smccc: interrupted index=0 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=1 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=2 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=3 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=4 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=5 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=6 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=7 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=8 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=9 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=10 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=11 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=12 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=13 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=14 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=15 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=16 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=17 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=18 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=19 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=20 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=21 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=22 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=23 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=24 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=25 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=26 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=27 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=28 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=29 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=30 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=31 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=32 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=33 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=34 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=35 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=36 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=37 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=38 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=39 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=40 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=41 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: interrupted index=42 before=ffffffff after=ffffffff service=0 USB_progress_calls=0
+marble-smccc: resume_audit samples=43 owned_service_calls=0 USB_progress_calls=0 foreign_clears=0 allocator_calls=0 native_dispatch=0 limit_calls=128 limit_us=1000000 thermal_samples=11 thermal_ok=1 die_max_mc=38100
+marble-qmp-hold: stop PASS=1 on_held=1 mailbox_ACKs=1 IPCC_clears=1 DSP_start=1
+marble-smccc: PAS_stop PASS=1 fn=42000206 arginfo=1 PAS_id=1 initial_a6=0 initial_a7=0 calls=44 outcome=0 raw_a0=0 raw_a1=0 raw_a2=0 raw_a3=0 raw_a6=0 previous_TPL=4 DAIF_before=300 DAIF_after=300 elapsed_us=608870 WAITQ_replays=0 auth_reset=0 DSP_start=1
+marble-audio-map: result PASS=1 stage=9 status=0 context=5 allocation=f9f23000 physical=f9f26000 par=ff000f9f26000a82 allocated=1 programmed=1 translated=1 disabled=1 restored=1 freed=1 retained=0 writes=35 translation_mode=2 stream_writes=8 PCM_requests=2
+aud-native: phase=stopped active=0 failed=0 stream=0 pending=0 tx=0 reply=0 started=0 submitted=2 completed=2 published=2 configured=1 RX=142 TX=23 PAS_stopped=1 restored=1 owner=EFI zero=1 XNU_sink=0 audio_acceptance=0
+marble-pil-held: shutdown status=0 transport=1 secure=0 verified=1 target_access=0
+marble-qmp-hold: notify stage=2 PASS=1 observed=0 after=ffffffff clear_writes=2 foreign_clears=0 IRQ_enable_writes=0 GIC_writes=0
+marble-qmp-hold: complete PASS=1 ON_before_PAS=1 PAS_before_OFF=1 mailbox_ACKs=2 IPCC_clears=2 wire_preserved=1 DSP_start=1 audio_acceptance=0
+marble-pil-held: post_shutdown_gate PASS=1 PAS_stopped=1 payload_restore=0
+marble-glink: released PASS=1 active=0 dirty=0 up=0 down=0 invalid=0 open=0 tx=0 dsp_start_attempted=1 pmic_writes=0
+marble-pil-held: restore-gate shutdown_verified=1 display_disjoint=1 target_access=1
+marble-pil-held: restored PASS=1 original_restored=1 free_status=0 backup_retained=0 shutdown_before_restore=1 DSP_start=1
+marble-pil-header: complete PASS=1 metadata_clear=1 clear_rc=10 PAS_metadata_requested=1 auth_reset=1 dsp_start=1
+marble-pil-ramfs: uninstall slot=3 status=0
+marble-pil-ramfs: uninstall slot=2 status=0
+marble-pil-ramfs: uninstall slot=1 status=0
+marble-pil-ramfs: uninstall slot=0 status=0
+marble-pil-ramfs: released PASS=1 installed=0 dirty=0 reads=27 file_writes=0 block_reads=0 block_writes=0 opens=57 closes=57 watchdog_clear=8000000000000007 dsp_start=1
+marble-adsp-owned: action_return outcome=1 bandwidth_release_allowed=1
+marble-adsp-owned: complete PASS=1 ROM_stage_restored=1 LPI_released=1 LPI_active=0 XO_retained=1 thermal_ok=1 ICB_RUN_retained=1 SMEM_retained=1 watchdog_armed=1 cold_reset_required=1 original_hardware_restored=0 DSP_start=1 storage_access=0 audio_acceptance=0
+aw: end PASS=1 called=1 window_passed=1 DSP_passed=1 DSP_dirty=0 config_active=0 clock_active=0 dirty=0 elapsed_us=5172468 amp_commands=392 cold_reset_required=1 audio_acceptance=0
